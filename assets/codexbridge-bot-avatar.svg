@@ -1,0 +1,45 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bgGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(340 260) rotate(40) scale(920)">
+      <stop offset="0" stop-color="#1E293B"/>
+      <stop offset="0.55" stop-color="#111827"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </radialGradient>
+    <linearGradient id="ringGrad" x1="200" y1="180" x2="824" y2="844" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0.02"/>
+    </linearGradient>
+    <filter id="softGlow" x="120" y="120" width="784" height="784" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="26"/>
+    </filter>
+  </defs>
+
+  <rect x="24" y="24" width="976" height="976" rx="230" fill="url(#bgGlow)"/>
+  <rect x="24" y="24" width="976" height="976" rx="230" stroke="#334155" stroke-width="2"/>
+
+  <circle cx="820" cy="210" r="220" fill="url(#accentGrad)"/>
+  <circle cx="210" cy="860" r="180" fill="url(#accentGrad)"/>
+
+  <circle cx="512" cy="450" r="300" fill="#0B1220"/>
+  <circle cx="512" cy="450" r="288" stroke="url(#ringGrad)" stroke-width="18"/>
+
+  <g filter="url(#softGlow)">
+    <circle cx="512" cy="450" r="250" stroke="#22D3EE" stroke-opacity="0.25" stroke-width="8"/>
+  </g>
+
+  <text x="512" y="505" text-anchor="middle" fill="#F8FAFC"
+        font-family="SF Pro Display, PingFang SC, Helvetica Neue, Arial, sans-serif"
+        font-size="248" font-weight="700" letter-spacing="6">CB</text>
+
+  <text x="512" y="770" text-anchor="middle" fill="#E2E8F0"
+        font-family="SF Pro Text, PingFang SC, Helvetica Neue, Arial, sans-serif"
+        font-size="64" font-weight="600" letter-spacing="0.8">Codex Bridge</text>
+
+  <text x="512" y="842" text-anchor="middle" fill="#67E8F9"
+        font-family="SF Pro Text, PingFang SC, Helvetica Neue, Arial, sans-serif"
+        font-size="44" font-weight="500" letter-spacing="0.5">Remote / 远程控制</text>
+</svg>

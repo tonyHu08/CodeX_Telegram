@@ -1,0 +1,17 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+logs/
+run/
+data/
+_old_path_stub_backup_*/
+apps/desktop/release/
+apps/desktop/.vite/

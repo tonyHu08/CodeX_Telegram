@@ -1,0 +1,18 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="120" y1="120" x2="904" y2="904" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111C34"/>
+      <stop offset="1" stop-color="#0A1326"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="24" y="24" width="976" height="976" rx="232" fill="url(#bg)"/>
+  <rect x="24" y="24" width="976" height="976" rx="232" stroke="#26354F" stroke-width="2"/>
+
+  <path d="M256 300H768" stroke="#22D3EE" stroke-width="12" stroke-linecap="round" opacity="0.95"/>
+  <path d="M256 724H768" stroke="#22D3EE" stroke-width="12" stroke-linecap="round" opacity="0.95"/>
+
+  <text x="512" y="565" text-anchor="middle" fill="#F8FAFC"
+        font-family="SF Pro Display, PingFang SC, Helvetica Neue, Arial, sans-serif"
+        font-size="290" font-weight="700" letter-spacing="6">CB</text>
+</svg>

@@ -1,0 +1,14 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="24" y="24" width="976" height="976" rx="232" fill="#0B1220"/>
+  <rect x="24" y="24" width="976" height="976" rx="232" stroke="#1F2C44" stroke-width="2"/>
+
+  <g opacity="0.12">
+    <circle cx="512" cy="512" r="360" stroke="#22D3EE" stroke-width="14"/>
+  </g>
+
+  <text x="512" y="555" text-anchor="middle" fill="#F8FAFC"
+        font-family="SF Pro Display, PingFang SC, Helvetica Neue, Arial, sans-serif"
+        font-size="298" font-weight="700" letter-spacing="5">CB</text>
+
+  <rect x="350" y="676" width="324" height="10" rx="5" fill="#22D3EE"/>
+</svg>
