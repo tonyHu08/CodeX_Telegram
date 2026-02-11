@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DesktopConfig } from './desktop-types';
+import { normalizeLocale } from './i18n';
 
 export function defaultDataRoot(): string {
   return path.join(os.homedir(), '.codex-bridge');
@@ -19,6 +20,7 @@ export function createDefaultDesktopConfig(partial?: Partial<DesktopConfig>): De
     selectedThreadId: partial?.selectedThreadId ?? null,
     autoStartAgent: partial?.autoStartAgent ?? true,
     logLevel: partial?.logLevel || 'info',
+    locale: normalizeLocale(partial?.locale),
   };
 }
 
@@ -63,6 +65,7 @@ export class ConfigStore {
       logLevel: record.logLevel === 'debug' || record.logLevel === 'info' || record.logLevel === 'warn' || record.logLevel === 'error'
         ? record.logLevel
         : undefined,
+      locale: normalizeLocale(record.locale),
     });
     this.save(cfg);
     return cfg;

@@ -9,6 +9,7 @@ import { createLogger, type Logger } from './logger';
 import { ThreadRuntimeManager } from './runtime-manager';
 import { runHealthChecks } from './health';
 import { sanitizePreview, truncate } from './utils';
+import { localeText, normalizeLocale, type BridgeLocale } from './i18n';
 import type {
   AgentStatus,
   DeviceOutboundEvent,
@@ -45,6 +46,7 @@ export interface BridgeAgentOptions {
   turnTimeoutMs?: number;
   stuckTurnResetMs?: number;
   autoApproveRemoteActions?: boolean;
+  locale?: BridgeLocale;
   logger?: Logger;
 }
 
@@ -64,6 +66,7 @@ interface ResolvedBridgeAgentOptions {
   turnTimeoutMs: number;
   stuckTurnResetMs: number;
   autoApproveRemoteActions: boolean;
+  locale: BridgeLocale;
   logger?: Logger;
 }
 
@@ -200,7 +203,7 @@ function normalizeIncomingImageAttachments(images: IncomingImageAttachment[] | u
     .filter((item) => item.kind === 'localImage' && !!item.path);
 }
 
-function buildTurnInputs(event: IncomingUserMessageEvent): TurnUserInput[] {
+function buildTurnInputs(event: IncomingUserMessageEvent, locale: BridgeLocale): TurnUserInput[] {
   const normalizedText = compactText(event.text || '');
   const images = normalizeIncomingImageAttachments(event.images);
   const inputs: TurnUserInput[] = [];
@@ -209,7 +212,14 @@ function buildTurnInputs(event: IncomingUserMessageEvent): TurnUserInput[] {
     inputs.push({ type: 'text', text: normalizedText });
   } else if (images.length > 0) {
     // Give model explicit instruction for caption-less image messages.
-    inputs.push({ type: 'text', text: '请基于这张图片回答用户问题；若无其他问题，请先简要描述图片内容。' });
+    inputs.push({
+      type: 'text',
+      text: localeText(
+        locale,
+        '请基于这张图片回答用户问题；若无其他问题，请先简要描述图片内容。',
+        'Please answer based on this image. If no specific question is provided, briefly describe the image first.',
+      ),
+    });
   }
 
   for (const image of images) {
@@ -217,7 +227,7 @@ function buildTurnInputs(event: IncomingUserMessageEvent): TurnUserInput[] {
   }
 
   if (inputs.length === 0) {
-    inputs.push({ type: 'text', text: '请回复字符串 OK' });
+    inputs.push({ type: 'text', text: localeText(locale, '请回复字符串 OK', 'Please reply with string OK') });
   }
   return inputs;
 }
@@ -245,24 +255,24 @@ function basenameLabel(inputPath: string): string {
   return base || normalized;
 }
 
-function inferThreadTopic(preview: string, fallbackIndex: number): string {
+function inferThreadTopic(preview: string, fallbackIndex: number, locale: BridgeLocale): string {
   const normalized = compactText(preview || '');
   if (!normalized) {
-    return `会话 ${fallbackIndex + 1}`;
+    return localeText(locale, `会话 ${fallbackIndex + 1}`, `Thread ${fallbackIndex + 1}`);
   }
 
-  const keywordRules: Array<{ pattern: RegExp; title: string }> = [
-    { pattern: /(telegram|clawdbot|远程|手机).*(codex|app)/i, title: 'Telegram 远程控制 Codex' },
-    { pattern: /(优化|改进).*(ios app|展示|交互)/i, title: 'iOS 展示交互优化' },
-    { pattern: /(readme|项目).*(了解|信息|基本)/i, title: '项目基础信息梳理' },
-    { pattern: /(ios app).*(后端|服务).*(infohub|资讯)/i, title: 'InfoHub 项目全貌梳理' },
-    { pattern: /(拍照|抠图|单词卡|swift ui|swiftui)/i, title: 'iOS 拍照抠图单词卡' },
-    { pattern: /^(你好|hello|hi)$/i, title: '问候 / 快速测试' },
+  const keywordRules: Array<{ pattern: RegExp; titleZh: string; titleEn: string }> = [
+    { pattern: /(telegram|clawdbot|remote|远程|手机).*(codex|app)/i, titleZh: 'Telegram 远程控制 Codex', titleEn: 'Telegram Remote Control for Codex' },
+    { pattern: /(优化|改进|optimi[sz]e|improv).*(ios app|展示|交互|ui|ux)/i, titleZh: 'iOS 展示交互优化', titleEn: 'iOS UI/UX Improvements' },
+    { pattern: /(readme|项目|project).*(了解|信息|基本|overview|intro)/i, titleZh: '项目基础信息梳理', titleEn: 'Project Basics Overview' },
+    { pattern: /(ios app).*(后端|服务|backend|service).*(infohub|资讯)/i, titleZh: 'InfoHub 项目全貌梳理', titleEn: 'InfoHub Full Project Overview' },
+    { pattern: /(拍照|抠图|单词卡|swift ui|swiftui|flashcard|subject extraction)/i, titleZh: 'iOS 拍照抠图单词卡', titleEn: 'iOS Photo Cutout Flashcards' },
+    { pattern: /^(你好|hello|hi)$/i, titleZh: '问候 / 快速测试', titleEn: 'Greeting / Quick Test' },
   ];
 
   for (const rule of keywordRules) {
     if (rule.pattern.test(normalized)) {
-      return rule.title;
+      return localeText(locale, rule.titleZh, rule.titleEn);
     }
   }
 
@@ -280,7 +290,7 @@ function inferThreadTopic(preview: string, fallbackIndex: number): string {
     .map((part) => compactText(part))
     .filter(Boolean);
   const topic = parts.find((part) => part.length >= 4) || cleaned;
-  return truncate(topic || `会话 ${fallbackIndex + 1}`, 18);
+  return truncate(topic || localeText(locale, `会话 ${fallbackIndex + 1}`, `Thread ${fallbackIndex + 1}`), 18);
 }
 
 function loadCodexSidebarMetadata(logger?: Logger): CodexSidebarMetadata {
@@ -381,7 +391,7 @@ function loadCodexSidebarMetadata(logger?: Logger): CodexSidebarMetadata {
   }
 }
 
-function resolveThreadGroup(thread: ThreadSummary, metadata: CodexSidebarMetadata): string {
+function resolveThreadGroup(thread: ThreadSummary, metadata: CodexSidebarMetadata, locale: BridgeLocale): string {
   const cwd = (thread.cwd || '').trim();
   if (cwd) {
     for (const root of metadata.workspaceRoots) {
@@ -392,19 +402,20 @@ function resolveThreadGroup(thread: ThreadSummary, metadata: CodexSidebarMetadat
     }
     return basenameLabel(cwd) || cwd;
   }
-  return thread.source === 'cli' ? 'CLI' : '其他';
+  return thread.source === 'cli' ? 'CLI' : localeText(locale, '其他', 'Other');
 }
 
 function resolveThreadTitle(
   thread: ThreadSummary,
   index: number,
   metadata: CodexSidebarMetadata,
+  locale: BridgeLocale,
 ): string {
   const fromCodex = metadata.titleByThreadId.get(thread.id);
   if (fromCodex) {
     return fromCodex;
   }
-  return inferThreadTopic(thread.preview || '', index);
+  return inferThreadTopic(thread.preview || '', index, locale);
 }
 
 function pickPreferredThread(
@@ -442,14 +453,15 @@ function pickPreferredThread(
     : current;
 }
 
-function buildThreadButtonTitle(item: DisplayThreadItem, index: number, isCurrent: boolean): string {
-  const title = truncate(compactText(item.title || `会话 ${index + 1}`), 24);
+function buildThreadButtonTitle(item: DisplayThreadItem, index: number, isCurrent: boolean, locale: BridgeLocale): string {
+  const title = truncate(compactText(item.title || localeText(locale, `会话 ${index + 1}`, `Thread ${index + 1}`)), 24);
   return `${isCurrent ? '✅ ' : ''}🧵 ${title}`;
 }
 
 function buildThreadsInlineKeyboard(
   items: DisplayThreadItem[],
   currentThreadId: string | null,
+  locale: BridgeLocale,
 ): Record<string, unknown> {
   const inlineRows: Array<Array<{ text: string; callback_data: string }>> = [];
 
@@ -457,13 +469,13 @@ function buildThreadsInlineKeyboard(
     const isCurrent = currentThreadId === item.thread.id;
     inlineRows.push([
       {
-        text: buildThreadButtonTitle(item, index, isCurrent),
+        text: buildThreadButtonTitle(item, index, isCurrent, locale),
         callback_data: `bind_thread:${item.thread.id}`,
       },
     ]);
   });
 
-  inlineRows.push([{ text: '🔄 刷新会话列表', callback_data: 'threads' }]);
+  inlineRows.push([{ text: localeText(locale, '🔄 刷新会话列表', '🔄 Refresh threads'), callback_data: 'threads' }]);
 
   return {
     inline_keyboard: inlineRows,
@@ -486,6 +498,7 @@ function dedupeThreadsForDisplay(
   threads: ThreadSummary[],
   currentThreadId: string | null,
   metadata: CodexSidebarMetadata,
+  locale: BridgeLocale,
 ): { items: DisplayThreadItem[]; mergedCount: number } {
   const dedupedById = new Map<string, ThreadSummary>();
   for (const thread of threads) {
@@ -517,8 +530,8 @@ function dedupeThreadsForDisplay(
 
   for (let index = 0; index < threadsByTime.length; index += 1) {
     const thread = threadsByTime[index];
-    const title = resolveThreadTitle(thread, index, metadata);
-    const group = resolveThreadGroup(thread, metadata);
+    const title = resolveThreadTitle(thread, index, metadata, locale);
+    const group = resolveThreadGroup(thread, metadata, locale);
     const signature = `${group}|${thread.source}|${normalizeTopicForKey(title)}`;
     const existing = mergedByTopic.get(signature);
     const current: DisplayThreadItem = {
@@ -751,6 +764,7 @@ async function withTimeout<T>(task: Promise<T>, timeoutMs: number, label: string
 
 export class BridgeAgent extends EventEmitter {
   private readonly options: ResolvedBridgeAgentOptions;
+  private locale: BridgeLocale;
   private readonly logger: Logger;
   private readonly db: BridgeDb;
   private readonly runtimeManager: ThreadRuntimeManager;
@@ -790,8 +804,10 @@ export class BridgeAgent extends EventEmitter {
       turnTimeoutMs: options.turnTimeoutMs ?? 20 * 60 * 1000,
       stuckTurnResetMs: options.stuckTurnResetMs ?? 4 * 60 * 1000,
       autoApproveRemoteActions: options.autoApproveRemoteActions ?? true,
+      locale: normalizeLocale(options.locale),
       logger: options.logger,
     };
+    this.locale = this.options.locale;
 
     this.logger = this.options.logger || createLogger();
     this.db = new BridgeDb(this.options.dbPath, this.logger);
@@ -805,6 +821,14 @@ export class BridgeAgent extends EventEmitter {
     this.runtimeManager.setApprovalHandler((event) => {
       void this.handleApproval(event);
     });
+  }
+
+  setLocale(locale: BridgeLocale): void {
+    this.locale = normalizeLocale(locale);
+  }
+
+  private t(zh: string, en: string): string {
+    return localeText(this.locale, zh, en);
   }
 
   async start(): Promise<void> {
@@ -912,7 +936,10 @@ export class BridgeAgent extends EventEmitter {
         type: 'finalResponse',
         chatId: event.chatId,
         messageId: event.messageId,
-        text: '当前桥接版支持“图片输入 + 文本回复”，但暂不支持把生成图片回传到 Telegram。请改为文字输出需求。',
+        text: this.t(
+          '当前桥接版支持“图片输入 + 文本回复”，但暂不支持把生成图片回传到 Telegram。请改为文字输出需求。',
+          'Current bridge supports image input + text output, but does not support sending generated images back to Telegram yet. Please request text output.',
+        ),
         purpose: 'turn',
         createdAt: Date.now(),
       });
@@ -924,7 +951,7 @@ export class BridgeAgent extends EventEmitter {
       this.emitFinal(
         event.chatId,
         event.messageId,
-        '当前未绑定会话，请先执行 /threads 然后 /bind。',
+        this.t('当前未绑定会话，请先执行 /threads 然后 /bind。', 'No thread is bound. Please run /threads and then /bind.'),
         {
           replyMarkup: buildMainReplyKeyboard(),
         },
@@ -943,7 +970,10 @@ export class BridgeAgent extends EventEmitter {
           chatId: event.chatId,
           messageId: event.messageId,
           status: 'queued',
-          text: '检测到前一条任务卡住，正在自动重置并继续执行本条消息…',
+          text: this.t(
+            '检测到前一条任务卡住，正在自动重置并继续执行本条消息…',
+            'The previous task appears stuck. Automatically resetting runtime and continuing this message...',
+          ),
           createdAt: Date.now(),
         });
         void this.runtimeManager.resetThread(threadId);
@@ -956,7 +986,7 @@ export class BridgeAgent extends EventEmitter {
           chatId: event.chatId,
           messageId: event.messageId,
           status: 'failed',
-          text: '线程忙，且已有排队消息，请稍后再试。',
+          text: this.t('线程忙，且已有排队消息，请稍后再试。', 'Thread is busy and already has a queued message. Please try again later.'),
           createdAt: Date.now(),
         });
         return;
@@ -968,7 +998,9 @@ export class BridgeAgent extends EventEmitter {
         chatId: event.chatId,
         messageId: event.messageId,
         status: 'queued',
-        text: `已加入队列，等待前一条任务完成${running ? `（已运行 ${Math.max(1, Math.floor((Date.now() - running.startedAt) / 1000))} 秒）` : ''}。`,
+        text: this.locale === 'en'
+          ? `Added to queue. Waiting for previous task${running ? ` (running for ${Math.max(1, Math.floor((Date.now() - running.startedAt) / 1000))}s)` : ''}.`
+          : `已加入队列，等待前一条任务完成${running ? `（已运行 ${Math.max(1, Math.floor((Date.now() - running.startedAt) / 1000))} 秒）` : ''}。`,
         createdAt: Date.now(),
       });
       return;
@@ -1012,7 +1044,7 @@ export class BridgeAgent extends EventEmitter {
           chatId: event.chatId,
           messageId: event.messageId,
           status: 'failed',
-          text: `执行失败：${message}`,
+          text: this.locale === 'en' ? `Execution failed: ${message}` : `执行失败：${message}`,
           createdAt: Date.now(),
         });
 
@@ -1020,7 +1052,7 @@ export class BridgeAgent extends EventEmitter {
           type: 'finalResponse',
           chatId: event.chatId,
           messageId: event.messageId,
-          text: `执行失败：${message}`,
+          text: this.locale === 'en' ? `Execution failed: ${message}` : `执行失败：${message}`,
           purpose: 'turn',
           createdAt: Date.now(),
         });
@@ -1113,7 +1145,7 @@ export class BridgeAgent extends EventEmitter {
           return;
         case 'unbind':
           this.db.deleteBinding(this.bindingChatId());
-          this.emitFinal(event.chatId, event.messageId, '已解绑当前会话。', {
+          this.emitFinal(event.chatId, event.messageId, this.t('已解绑当前会话。', 'Current thread unbound.'), {
             replyMarkup: buildMainReplyKeyboard(),
           });
           return;
@@ -1124,10 +1156,11 @@ export class BridgeAgent extends EventEmitter {
           await this.sendHelp(event.chatId, event.messageId);
           return;
         default:
-          this.emitFinal(event.chatId, event.messageId, '不支持该命令。请发送 /help 查看可用命令。');
+          this.emitFinal(event.chatId, event.messageId, this.t('不支持该命令。请发送 /help 查看可用命令。', 'Unsupported command. Send /help for available commands.'));
       }
     } catch (error: any) {
-      this.emitFinal(event.chatId, event.messageId, `命令执行失败：${error?.message || String(error)}`);
+      const msg = error?.message || String(error);
+      this.emitFinal(event.chatId, event.messageId, this.locale === 'en' ? `Command failed: ${msg}` : `命令执行失败：${msg}`);
     }
   }
 
@@ -1147,7 +1180,7 @@ export class BridgeAgent extends EventEmitter {
   private async handleCancelCommand(event: IncomingControlCommandEvent): Promise<void> {
     const binding = this.getBinding();
     if (!binding) {
-      this.emitFinal(event.chatId, event.messageId, '当前未绑定会话，无法终止任务。');
+      this.emitFinal(event.chatId, event.messageId, this.t('当前未绑定会话，无法终止任务。', 'No bound thread. Unable to cancel tasks.'));
       return;
     }
 
@@ -1155,7 +1188,7 @@ export class BridgeAgent extends EventEmitter {
     const hasRunning = this.runningTurns.has(threadId);
     const hasQueued = this.queuedByThread.has(threadId);
     if (!hasRunning && !hasQueued) {
-      this.emitFinal(event.chatId, event.messageId, '当前没有可终止的运行中/排队任务。', {
+      this.emitFinal(event.chatId, event.messageId, this.t('当前没有可终止的运行中/排队任务。', 'There is no running or queued task to cancel.'), {
         replyMarkup: buildMainReplyKeyboard(),
       });
       return;
@@ -1177,17 +1210,19 @@ export class BridgeAgent extends EventEmitter {
       this.emitFinal(
         event.chatId,
         event.messageId,
-        `终止请求已提交，但重置运行时失败：${resetError}`,
+        this.locale === 'en'
+          ? `Cancellation requested, but runtime reset failed: ${resetError}`
+          : `终止请求已提交，但重置运行时失败：${resetError}`,
         { replyMarkup: buildMainReplyKeyboard() },
       );
       return;
     }
 
     const summary = hasRunning && hasQueued
-      ? '已终止当前任务，并清空排队消息。'
+      ? this.t('已终止当前任务，并清空排队消息。', 'Current task cancelled and queued message cleared.')
       : hasRunning
-        ? '已终止当前任务。'
-        : '已清空排队消息。';
+        ? this.t('已终止当前任务。', 'Current task cancelled.')
+        : this.t('已清空排队消息。', 'Queued message cleared.');
     this.emitFinal(event.chatId, event.messageId, summary, {
       replyMarkup: buildMainReplyKeyboard(),
     });
@@ -1195,7 +1230,7 @@ export class BridgeAgent extends EventEmitter {
 
   private async processMessage(threadId: string, event: IncomingUserMessageEvent): Promise<void> {
     const startedAt = Date.now();
-    const turnInput = buildTurnInputs(event);
+    const turnInput = buildTurnInputs(event, this.locale);
     this.turnContextByThread.set(threadId, {
       chatId: event.chatId,
       messageId: event.messageId,
@@ -1206,7 +1241,7 @@ export class BridgeAgent extends EventEmitter {
       chatId: event.chatId,
       messageId: event.messageId,
       status: 'running',
-      text: '已接收，正在让 Codex 处理…',
+      text: this.t('已接收，正在让 Codex 处理…', 'Received, processing with Codex...'),
       createdAt: Date.now(),
     });
 
@@ -1216,7 +1251,9 @@ export class BridgeAgent extends EventEmitter {
         chatId: event.chatId,
         messageId: event.messageId,
         status: 'running',
-        text: `仍在处理中（${Math.max(1, Math.floor((Date.now() - startedAt) / 1000))} 秒）`,
+        text: this.locale === 'en'
+          ? `Still processing (${Math.max(1, Math.floor((Date.now() - startedAt) / 1000))}s)`
+          : `仍在处理中（${Math.max(1, Math.floor((Date.now() - startedAt) / 1000))} 秒）`,
         createdAt: Date.now(),
       });
     }, 30_000);
@@ -1312,7 +1349,9 @@ export class BridgeAgent extends EventEmitter {
         chatId: event.chatId,
         messageId: event.messageId,
         status: 'running',
-        text: `检测到 Codex 连接中断，正在自动重试（${recoveryAttempt}/${maxRecoveryAttempts}）…`,
+        text: this.locale === 'en'
+          ? `Codex connection interrupted. Retrying automatically (${recoveryAttempt}/${maxRecoveryAttempts})...`
+          : `检测到 Codex 连接中断，正在自动重试（${recoveryAttempt}/${maxRecoveryAttempts}）…`,
         createdAt: Date.now(),
       });
 
@@ -1340,7 +1379,9 @@ export class BridgeAgent extends EventEmitter {
         chatId: event.chatId,
         messageId: event.messageId,
         status: 'completed',
-        text: result.usedFallback ? '已完成（自动回退模型）' : '已完成',
+        text: result.usedFallback
+          ? this.t('已完成（自动回退模型）', 'Completed (fallback model used)')
+          : this.t('已完成', 'Completed'),
         createdAt: Date.now(),
       });
 
@@ -1360,7 +1401,7 @@ export class BridgeAgent extends EventEmitter {
       chatId: event.chatId,
       messageId: event.messageId,
       status: 'failed',
-      text: result.errorMessage || '执行失败',
+      text: result.errorMessage || this.t('执行失败', 'Execution failed'),
       createdAt: Date.now(),
     });
 
@@ -1368,7 +1409,9 @@ export class BridgeAgent extends EventEmitter {
       type: 'finalResponse',
       chatId: event.chatId,
       messageId: event.messageId,
-      text: `执行失败：${result.errorMessage || 'unknown error'}`,
+      text: this.locale === 'en'
+        ? `Execution failed: ${result.errorMessage || 'unknown error'}`
+        : `执行失败：${result.errorMessage || 'unknown error'}`,
       purpose: 'turn',
       createdAt: Date.now(),
     });
@@ -1378,19 +1421,33 @@ export class BridgeAgent extends EventEmitter {
     this.emitFinal(
       chatId,
       messageId,
-      [
-        '远程控制菜单（可直接点键盘按钮）：',
-        '/threads - 查看最近会话（精简列表，支持编号绑定）',
-        '/bind latest - 绑定最新会话',
-        '/bind <threadId|编号> - 按 ID（或兼容旧编号）绑定',
-        '/active - 快速查看当前正在对话的会话',
-        '/detail <编号|threadId|current|latest> - 查看会话详情（来源/ID/CWD）',
-        '/current - 查看当前绑定会话的最近对话快照',
-        '/status - 查看绑定与运行状态',
-        '/cancel - 终止当前运行任务并清空排队',
-        '/unbind - 解除当前绑定',
-        '/help - 再次显示菜单',
-      ].join('\n'),
+      this.locale === 'en'
+        ? [
+            'Remote control menu (tap keyboard buttons directly):',
+            '/threads - list recent threads (compact list with index binding)',
+            '/bind latest - bind latest thread',
+            '/bind <threadId|index> - bind by id (or legacy index)',
+            '/active - quick view of active conversation thread',
+            '/detail <index|threadId|current|latest> - view details (source/ID/CWD)',
+            '/current - show latest snapshot of bound thread',
+            '/status - show binding and runtime status',
+            '/cancel - stop current task and clear queue',
+            '/unbind - remove current binding',
+            '/help - show this menu again',
+          ].join('\n')
+        : [
+            '远程控制菜单（可直接点键盘按钮）：',
+            '/threads - 查看最近会话（精简列表，支持编号绑定）',
+            '/bind latest - 绑定最新会话',
+            '/bind <threadId|编号> - 按 ID（或兼容旧编号）绑定',
+            '/active - 快速查看当前正在对话的会话',
+            '/detail <编号|threadId|current|latest> - 查看会话详情（来源/ID/CWD）',
+            '/current - 查看当前绑定会话的最近对话快照',
+            '/status - 查看绑定与运行状态',
+            '/cancel - 终止当前运行任务并清空排队',
+            '/unbind - 解除当前绑定',
+            '/help - 再次显示菜单',
+          ].join('\n'),
       {
         replyMarkup: buildMainReplyKeyboard(),
       },
@@ -1405,6 +1462,7 @@ export class BridgeAgent extends EventEmitter {
       visibility.threads,
       currentBinding?.threadId || null,
       sidebarMetadata,
+      this.locale,
     );
 
     return {
@@ -1424,14 +1482,14 @@ export class BridgeAgent extends EventEmitter {
       'thread/list',
     );
     if (threads.length === 0) {
-      this.emitFinal(event.chatId, event.messageId, '当前没有可用会话。');
+      this.emitFinal(event.chatId, event.messageId, this.t('当前没有可用会话。', 'No available threads found.'));
       return;
     }
 
     const state = this.buildDisplayThreadsState(event.chatId, threads);
     const displayItems = state.displayItems;
     if (displayItems.length === 0) {
-      this.emitFinal(event.chatId, event.messageId, '当前没有可展示的会话。');
+      this.emitFinal(event.chatId, event.messageId, this.t('当前没有可展示的会话。', 'No visible threads to display.'));
       return;
     }
 
@@ -1440,16 +1498,18 @@ export class BridgeAgent extends EventEmitter {
       updatedAt: nowMs(),
     });
 
-    const lines: string[] = ['最近会话：'];
+    const lines: string[] = [this.t('最近会话：', 'Recent threads:')];
     const currentItem = state.currentBinding
       ? displayItems.find((item) => item.thread.id === state.currentBinding?.threadId) || null
       : null;
     if (currentItem) {
-      lines.push(`当前会话: ✅ <b>${escapeTelegramHtml(currentItem.title)}</b>`);
+      lines.push(this.locale === 'en'
+        ? `Current thread: ✅ <b>${escapeTelegramHtml(currentItem.title)}</b>`
+        : `当前会话: ✅ <b>${escapeTelegramHtml(currentItem.title)}</b>`);
     } else if (state.currentBinding) {
-      lines.push('当前会话: ✅ <b>(已绑定，但不在最近列表)</b>');
+      lines.push(this.t('当前会话: ✅ <b>(已绑定，但不在最近列表)</b>', 'Current thread: ✅ <b>(bound but not in recent list)</b>'));
     } else {
-      lines.push('当前会话: (未绑定)');
+      lines.push(this.t('当前会话: (未绑定)', 'Current thread: (not bound)'));
     }
     lines.push('');
 
@@ -1464,21 +1524,25 @@ export class BridgeAgent extends EventEmitter {
       lines.push(
         `${index + 1}. ${isCurrent ? '✅ ' : ''}<b>${escapeTelegramHtml(item.title)}</b>`,
       );
-      lines.push(`   更新: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`);
+      lines.push(
+        this.locale === 'en'
+          ? `   Updated: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`
+          : `   更新: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`,
+      );
     });
     if (state.mergedCount > 0) {
-      lines.push(`已合并近似重复会话: ${state.mergedCount}`);
+      lines.push(this.locale === 'en' ? `Merged near-duplicate threads: ${state.mergedCount}` : `已合并近似重复会话: ${state.mergedCount}`);
     }
     if (state.usingSidebarVisibility && state.hiddenCount > 0) {
-      lines.push(`已过滤侧边栏不可见会话: ${state.hiddenCount}`);
+      lines.push(this.locale === 'en' ? `Filtered sidebar-invisible threads: ${state.hiddenCount}` : `已过滤侧边栏不可见会话: ${state.hiddenCount}`);
     }
     lines.push('');
-    lines.push('可用: /bind [编号] | /detail [编号] | /bind latest');
-    lines.push('快速查看当前: /active');
-    lines.push('提示: 详情信息（来源/ID/CWD）请用 /detail。');
+    lines.push(this.t('可用: /bind [编号] | /detail [编号] | /bind latest', 'Available: /bind [index] | /detail [index] | /bind latest'));
+    lines.push(this.t('快速查看当前: /active', 'Quick view current: /active'));
+    lines.push(this.t('提示: 详情信息（来源/ID/CWD）请用 /detail。', 'Tip: use /detail for source/ID/CWD details.'));
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
-      replyMarkup: buildThreadsInlineKeyboard(displayItems, state.currentBinding?.threadId || null),
+      replyMarkup: buildThreadsInlineKeyboard(displayItems, state.currentBinding?.threadId || null, this.locale),
       parseMode: 'HTML',
     });
   }
@@ -1507,7 +1571,7 @@ export class BridgeAgent extends EventEmitter {
   private async handleBindCommand(event: IncomingControlCommandEvent): Promise<void> {
     const argRaw = (event.args || '').trim();
     if (!argRaw) {
-      this.emitFinal(event.chatId, event.messageId, '用法: /bind latest 或 /bind <threadId|编号>');
+      this.emitFinal(event.chatId, event.messageId, this.t('用法: /bind latest 或 /bind <threadId|编号>', 'Usage: /bind latest or /bind <threadId|index>'));
       return;
     }
 
@@ -1527,10 +1591,11 @@ export class BridgeAgent extends EventEmitter {
         visibleThreads,
         this.getBinding()?.threadId || null,
         sidebarMetadata,
+        this.locale,
       );
       const preferred = this.pickPreferredLatestThread(deduped.items.map((item) => item.thread));
       if (!preferred) {
-        this.emitFinal(event.chatId, event.messageId, '没有可绑定的会话。');
+        this.emitFinal(event.chatId, event.messageId, this.t('没有可绑定的会话。', 'No thread available to bind.'));
         return;
       }
       targetThreadId = preferred.id;
@@ -1538,11 +1603,15 @@ export class BridgeAgent extends EventEmitter {
       const index = Number(argRaw);
       const cached = this.getCachedThreads(event.chatId);
       if (!cached || cached.length === 0) {
-        this.emitFinal(event.chatId, event.messageId, '最近会话缓存已过期，请先执行 /threads。');
+        this.emitFinal(event.chatId, event.messageId, this.t('最近会话缓存已过期，请先执行 /threads。', 'Recent thread cache expired. Run /threads first.'));
         return;
       }
       if (!Number.isFinite(index) || index <= 0 || index > cached.length) {
-        this.emitFinal(event.chatId, event.messageId, `编号无效，请输入 1 到 ${cached.length}。`);
+        this.emitFinal(
+          event.chatId,
+          event.messageId,
+          this.locale === 'en' ? `Invalid index. Please enter 1 to ${cached.length}.` : `编号无效，请输入 1 到 ${cached.length}。`,
+        );
         return;
       }
       targetThreadId = cached[index - 1].id;
@@ -1558,7 +1627,7 @@ export class BridgeAgent extends EventEmitter {
       }
 
       if (usingSidebarVisibility && visibleThreads && !visibleThreads.some((thread) => thread.id === targetThreadId)) {
-        this.emitFinal(event.chatId, event.messageId, '该会话在 Codex 侧边栏已删除或隐藏，请先执行 /threads 刷新列表。', {
+        this.emitFinal(event.chatId, event.messageId, this.t('该会话在 Codex 侧边栏已删除或隐藏，请先执行 /threads 刷新列表。', 'This thread is deleted or hidden in Codex sidebar. Run /threads to refresh list.'), {
           replyMarkup: buildMainReplyKeyboard(),
         });
         return;
@@ -1573,7 +1642,7 @@ export class BridgeAgent extends EventEmitter {
         'thread/read(bind)',
       );
       if (readResult && !readResult.thread?.id) {
-        this.emitFinal(event.chatId, event.messageId, `绑定失败：无法读取线程 ${targetThreadId}`);
+        this.emitFinal(event.chatId, event.messageId, this.locale === 'en' ? `Bind failed: unable to read thread ${targetThreadId}` : `绑定失败：无法读取线程 ${targetThreadId}`);
         return;
       }
     } catch (error: any) {
@@ -1597,12 +1666,12 @@ export class BridgeAgent extends EventEmitter {
       event.chatId,
       event.messageId,
       [
-        `已绑定线程: ${targetThreadId}`,
-        `来源: ${source}`,
-        preview ? `预览: ${truncate(preview, 160)}` : null,
-        !readResult ? '提示: 元数据读取超时，已先完成绑定；首次消息会自动继续。' : null,
-        source === 'cli' ? '提示: 该线程来源为 cli，在 Codex App 中可能不显示实时更新。' : null,
-        '可用: /current 查看当前会话快照',
+        this.locale === 'en' ? `Bound thread: ${targetThreadId}` : `已绑定线程: ${targetThreadId}`,
+        this.locale === 'en' ? `Source: ${source}` : `来源: ${source}`,
+        preview ? (this.locale === 'en' ? `Preview: ${truncate(preview, 160)}` : `预览: ${truncate(preview, 160)}`) : null,
+        !readResult ? this.t('提示: 元数据读取超时，已先完成绑定；首次消息会自动继续。', 'Tip: metadata read timed out; binding already completed. First message will continue automatically.') : null,
+        source === 'cli' ? this.t('提示: 该线程来源为 cli，在 Codex App 中可能不显示实时更新。', 'Tip: this thread is from CLI and may not appear live-updated in Codex App.') : null,
+        this.t('可用: /current 查看当前会话快照', 'Available: /current to view current thread snapshot'),
       ]
         .filter(Boolean)
         .join('\n'),
@@ -1615,7 +1684,7 @@ export class BridgeAgent extends EventEmitter {
   private async handleActiveCommand(event: IncomingControlCommandEvent): Promise<void> {
     const binding = this.getBinding();
     if (!binding) {
-      this.emitFinal(event.chatId, event.messageId, '当前未绑定会话。可先执行 /threads 然后 /bind [编号]。', {
+      this.emitFinal(event.chatId, event.messageId, this.t('当前未绑定会话。可先执行 /threads 然后 /bind [编号]。', 'No thread is bound. Run /threads then /bind [index].'), {
         replyMarkup: buildMainReplyKeyboard(),
       });
       return;
@@ -1630,7 +1699,13 @@ export class BridgeAgent extends EventEmitter {
         'thread/read',
       );
     } catch (error: any) {
-      this.emitFinal(event.chatId, event.messageId, `❌ 读取当前会话失败\n${error?.message || String(error)}`);
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.locale === 'en'
+          ? `❌ Failed to read current thread\n${error?.message || String(error)}`
+          : `❌ 读取当前会话失败\n${error?.message || String(error)}`,
+      );
       return;
     }
 
@@ -1644,20 +1719,26 @@ export class BridgeAgent extends EventEmitter {
     this.db.saveBinding(this.bindingChatId(), thread.id, `thread:${thread.source}`, nowMs());
 
     const metadata = loadCodexSidebarMetadata(this.logger);
-    const title = resolveThreadTitle(thread, 0, metadata);
-    const group = resolveThreadGroup(thread, metadata);
+    const title = resolveThreadTitle(thread, 0, metadata, this.locale);
+    const group = resolveThreadGroup(thread, metadata, this.locale);
     const running = this.runningTurns.has(thread.id);
     const queued = this.queuedByThread.has(thread.id);
 
     const lines: string[] = [];
-    lines.push('🎯 当前会话');
+    lines.push(this.t('🎯 当前会话', '🎯 Active thread'));
     lines.push(`<b>${escapeTelegramHtml(title)}</b>`);
-    lines.push(`分组: ${escapeTelegramHtml(group)}`);
+    lines.push(this.locale === 'en' ? `Group: ${escapeTelegramHtml(group)}` : `分组: ${escapeTelegramHtml(group)}`);
     if (thread.updatedAt > 0) {
-      lines.push(`更新时间: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`);
+      lines.push(this.locale === 'en'
+        ? `Updated: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`
+        : `更新时间: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`);
     }
-    lines.push(`任务状态: ${running ? (queued ? 'running + queued' : 'running') : (queued ? 'queued' : 'idle')}`);
-    lines.push('可用: /current 查看快照，/detail current 查看详情');
+    lines.push(
+      this.locale === 'en'
+        ? `Task status: ${running ? (queued ? 'running + queued' : 'running') : (queued ? 'queued' : 'idle')}`
+        : `任务状态: ${running ? (queued ? 'running + queued' : 'running') : (queued ? 'queued' : 'idle')}`,
+    );
+    lines.push(this.t('可用: /current 查看快照，/detail current 查看详情', 'Available: /current for snapshot, /detail current for details'));
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
       replyMarkup: buildMainReplyKeyboard(),
@@ -1673,7 +1754,7 @@ export class BridgeAgent extends EventEmitter {
 
     if (arg === 'current') {
       if (!binding) {
-        this.emitFinal(event.chatId, event.messageId, '当前未绑定会话。请先执行 /threads 然后 /bind <编号>。');
+        this.emitFinal(event.chatId, event.messageId, this.t('当前未绑定会话。请先执行 /threads 然后 /bind <编号>。', 'No bound thread. Please run /threads then /bind <index>.'));
         return;
       }
       targetThreadId = binding.threadId;
@@ -1682,7 +1763,7 @@ export class BridgeAgent extends EventEmitter {
       const state = this.buildDisplayThreadsState(event.chatId, latest);
       const preferred = this.pickPreferredLatestThread(state.displayItems.map((item) => item.thread));
       if (!preferred) {
-        this.emitFinal(event.chatId, event.messageId, '没有可查看详情的会话。');
+        this.emitFinal(event.chatId, event.messageId, this.t('没有可查看详情的会话。', 'No thread available for detail view.'));
         return;
       }
       targetThreadId = preferred.id;
@@ -1690,11 +1771,11 @@ export class BridgeAgent extends EventEmitter {
       const index = Number(arg);
       const cached = this.getCachedThreads(event.chatId);
       if (!cached || cached.length === 0) {
-        this.emitFinal(event.chatId, event.messageId, '最近会话缓存已过期，请先执行 /threads。');
+        this.emitFinal(event.chatId, event.messageId, this.t('最近会话缓存已过期，请先执行 /threads。', 'Recent thread cache expired. Run /threads first.'));
         return;
       }
       if (!Number.isFinite(index) || index <= 0 || index > cached.length) {
-        this.emitFinal(event.chatId, event.messageId, `编号无效，请输入 1 到 ${cached.length}。`);
+        this.emitFinal(event.chatId, event.messageId, this.locale === 'en' ? `Invalid index. Please enter 1 to ${cached.length}.` : `编号无效，请输入 1 到 ${cached.length}。`);
         return;
       }
       targetThreadId = cached[index - 1].id;
@@ -1710,12 +1791,18 @@ export class BridgeAgent extends EventEmitter {
         'thread/read',
       );
     } catch (error: any) {
-      this.emitFinal(event.chatId, event.messageId, `❌ 读取会话详情失败\n${error?.message || String(error)}`);
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.locale === 'en'
+          ? `❌ Failed to read thread details\n${error?.message || String(error)}`
+          : `❌ 读取会话详情失败\n${error?.message || String(error)}`,
+      );
       return;
     }
 
     if (!readResult?.thread?.id) {
-      this.emitFinal(event.chatId, event.messageId, `未找到会话：${targetThreadId}`);
+      this.emitFinal(event.chatId, event.messageId, this.locale === 'en' ? `Thread not found: ${targetThreadId}` : `未找到会话：${targetThreadId}`);
       return;
     }
 
@@ -1728,25 +1815,27 @@ export class BridgeAgent extends EventEmitter {
     };
 
     const metadata = loadCodexSidebarMetadata(this.logger);
-    const title = resolveThreadTitle(thread, 0, metadata);
-    const group = resolveThreadGroup(thread, metadata);
+    const title = resolveThreadTitle(thread, 0, metadata, this.locale);
+    const group = resolveThreadGroup(thread, metadata, this.locale);
     const isBound = !!binding && binding.threadId === thread.id;
 
     const lines: string[] = [];
-    lines.push('🧾 会话详情');
-    lines.push(`标题: <b>${escapeTelegramHtml(title)}</b>`);
-    lines.push(`分组: ${escapeTelegramHtml(group)}`);
+    lines.push(this.t('🧾 会话详情', '🧾 Thread details'));
+    lines.push(this.locale === 'en' ? `Title: <b>${escapeTelegramHtml(title)}</b>` : `标题: <b>${escapeTelegramHtml(title)}</b>`);
+    lines.push(this.locale === 'en' ? `Group: ${escapeTelegramHtml(group)}` : `分组: ${escapeTelegramHtml(group)}`);
     lines.push(`ID: <code>${escapeTelegramHtml(thread.id)}</code>`);
-    lines.push(`来源: ${escapeTelegramHtml(thread.source)}`);
-    lines.push(`CWD: <code>${escapeTelegramHtml(thread.cwd || '(无)')}</code>`);
+    lines.push(this.locale === 'en' ? `Source: ${escapeTelegramHtml(thread.source)}` : `来源: ${escapeTelegramHtml(thread.source)}`);
+    lines.push(this.locale === 'en' ? `CWD: <code>${escapeTelegramHtml(thread.cwd || '(none)')}</code>` : `CWD: <code>${escapeTelegramHtml(thread.cwd || '(无)')}</code>`);
     if (thread.updatedAt > 0) {
-      lines.push(`更新时间: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`);
+      lines.push(this.locale === 'en'
+        ? `Updated: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`
+        : `更新时间: ${escapeTelegramHtml(formatLocalTime(toEpochMs(thread.updatedAt)))}`);
     }
-    lines.push(`绑定状态: ${isBound ? '✅ 当前已绑定' : '未绑定'}`);
+    lines.push(this.locale === 'en' ? `Binding: ${isBound ? '✅ bound' : 'not bound'}` : `绑定状态: ${isBound ? '✅ 当前已绑定' : '未绑定'}`);
     if (thread.preview) {
-      lines.push(`预览: ${escapeTelegramHtml(truncate(thread.preview, 200))}`);
+      lines.push(this.locale === 'en' ? `Preview: ${escapeTelegramHtml(truncate(thread.preview, 200))}` : `预览: ${escapeTelegramHtml(truncate(thread.preview, 200))}`);
     }
-    lines.push('可用: /bind [编号|threadId] 绑定该会话');
+    lines.push(this.t('可用: /bind [编号|threadId] 绑定该会话', 'Available: /bind [index|threadId] to bind this thread'));
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
       replyMarkup: buildMainReplyKeyboard(),
@@ -1801,7 +1890,7 @@ export class BridgeAgent extends EventEmitter {
   private async handleCurrentCommand(event: IncomingControlCommandEvent): Promise<void> {
     const binding = this.getBinding();
     if (!binding) {
-      this.emitFinal(event.chatId, event.messageId, '当前未绑定会话，请先执行 /threads 然后 /bind。', {
+      this.emitFinal(event.chatId, event.messageId, this.t('当前未绑定会话，请先执行 /threads 然后 /bind。', 'No thread is bound. Please run /threads then /bind.'), {
         replyMarkup: buildMainReplyKeyboard(),
       });
       return;
@@ -1811,12 +1900,18 @@ export class BridgeAgent extends EventEmitter {
     try {
       snapshot = await this.fetchThreadConversationSnapshot(binding.threadId);
     } catch (error: any) {
-      this.emitFinal(event.chatId, event.messageId, `❌ 读取会话快照失败\n${error?.message || String(error)}`);
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.locale === 'en'
+          ? `❌ Failed to read thread snapshot\n${error?.message || String(error)}`
+          : `❌ 读取会话快照失败\n${error?.message || String(error)}`,
+      );
       return;
     }
 
     if (!snapshot) {
-      this.emitFinal(event.chatId, event.messageId, '未能解析当前会话内容，请稍后重试。');
+      this.emitFinal(event.chatId, event.messageId, this.t('未能解析当前会话内容，请稍后重试。', 'Unable to parse current thread content. Please retry.'));
       return;
     }
 
@@ -1824,30 +1919,30 @@ export class BridgeAgent extends EventEmitter {
     this.db.saveBinding(this.bindingChatId(), binding.threadId, `thread:${source}`, nowMs());
 
     const lines: string[] = [];
-    lines.push(`当前会话: ${snapshot.threadId}`);
-    lines.push(`来源: ${source}`);
+    lines.push(this.locale === 'en' ? `Current thread: ${snapshot.threadId}` : `当前会话: ${snapshot.threadId}`);
+    lines.push(this.locale === 'en' ? `Source: ${source}` : `来源: ${source}`);
     if (snapshot.updatedAt > 0) {
-      lines.push(`更新时间: ${formatLocalTime(toEpochMs(snapshot.updatedAt))}`);
+      lines.push(this.locale === 'en' ? `Updated: ${formatLocalTime(toEpochMs(snapshot.updatedAt))}` : `更新时间: ${formatLocalTime(toEpochMs(snapshot.updatedAt))}`);
     }
     if (snapshot.preview) {
-      lines.push(`标题: ${truncate(snapshot.preview, 120)}`);
+      lines.push(this.locale === 'en' ? `Title: ${truncate(snapshot.preview, 120)}` : `标题: ${truncate(snapshot.preview, 120)}`);
     }
     if (snapshot.degraded) {
-      lines.push('注: 当前会话较大或较忙，已降级为基础快照。');
+      lines.push(this.t('注: 当前会话较大或较忙，已降级为基础快照。', 'Note: current thread is large or busy; fallback snapshot is shown.'));
     }
-    lines.push(`最近用户: ${snapshot.lastUser ? truncate(snapshot.lastUser, 220) : '(无)'}`);
-    lines.push(`最近助手: ${snapshot.lastAssistant ? truncate(snapshot.lastAssistant, 220) : '(无)'}`);
+    lines.push(this.locale === 'en' ? `Recent user: ${snapshot.lastUser ? truncate(snapshot.lastUser, 220) : '(none)'}` : `最近用户: ${snapshot.lastUser ? truncate(snapshot.lastUser, 220) : '(无)'}`);
+    lines.push(this.locale === 'en' ? `Recent assistant: ${snapshot.lastAssistant ? truncate(snapshot.lastAssistant, 220) : '(none)'}` : `最近助手: ${snapshot.lastAssistant ? truncate(snapshot.lastAssistant, 220) : '(无)'}`);
 
     const recentTurns = snapshot.recentTurns.slice(-3);
     if (recentTurns.length > 0) {
-      lines.push('最近 3 轮:');
+      lines.push(this.t('最近 3 轮:', 'Recent 3 turns:'));
       recentTurns.forEach((turn, index) => {
-        lines.push(`${index + 1}) 👤 ${turn.userText ? truncate(turn.userText, 120) : '(无)'}`);
+        lines.push(this.locale === 'en' ? `${index + 1}) 👤 ${turn.userText ? truncate(turn.userText, 120) : '(none)'}` : `${index + 1}) 👤 ${turn.userText ? truncate(turn.userText, 120) : '(无)'}`);
         const assistantText = turn.assistantText
           ? truncate(turn.assistantText, 120)
           : turn.status === 'inProgress' || turn.status === 'in_progress'
-            ? '(处理中)'
-            : '(无)';
+            ? this.t('(处理中)', '(processing)')
+            : this.t('(无)', '(none)');
         lines.push(`   🤖 ${assistantText}`);
       });
     }
@@ -1881,19 +1976,19 @@ export class BridgeAgent extends EventEmitter {
     }
 
     const lines: string[] = [];
-    lines.push(`绑定线程: ${binding ? binding.threadId : '(未绑定)'}`);
+    lines.push(this.locale === 'en' ? `Bound thread: ${binding ? binding.threadId : '(none)'}` : `绑定线程: ${binding ? binding.threadId : '(未绑定)'}`);
     if (binding) {
-      lines.push(`线程来源: ${bindingSource}`);
+      lines.push(this.locale === 'en' ? `Thread source: ${bindingSource}` : `线程来源: ${bindingSource}`);
       if (bindingSource === 'cli') {
-        lines.push('提示: cli 线程在 Codex App 中可能不显示实时更新。');
+        lines.push(this.t('提示: cli 线程在 Codex App 中可能不显示实时更新。', 'Tip: CLI threads may not show live updates in Codex App.'));
       }
       if (threadUpdatedAt > 0) {
-        lines.push(`会话更新时间: ${formatLocalTime(toEpochMs(threadUpdatedAt))}`);
+        lines.push(this.locale === 'en' ? `Thread updated at: ${formatLocalTime(toEpochMs(threadUpdatedAt))}` : `会话更新时间: ${formatLocalTime(toEpochMs(threadUpdatedAt))}`);
       }
     }
-    lines.push(`运行中任务: ${this.runningTurns.size}`);
-    lines.push(`排队任务: ${this.queuedByThread.size}`);
-    lines.push(`待审批: ${this.pendingApprovals.size}`);
+    lines.push(this.locale === 'en' ? `Running tasks: ${this.runningTurns.size}` : `运行中任务: ${this.runningTurns.size}`);
+    lines.push(this.locale === 'en' ? `Queued tasks: ${this.queuedByThread.size}` : `排队任务: ${this.queuedByThread.size}`);
+    lines.push(this.locale === 'en' ? `Pending approvals: ${this.pendingApprovals.size}` : `待审批: ${this.pendingApprovals.size}`);
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
       replyMarkup: buildMainReplyKeyboard(),

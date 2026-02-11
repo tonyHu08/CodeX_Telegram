@@ -1,29 +1,37 @@
-# Privacy Boundary
+# Privacy Boundary / 隐私边界
 
-本项目默认采用“共享 Relay + 本地 Codex 执行”模型：
+## English
+Default model: `Relay + local Codex execution`.
 
-1. Telegram 消息先进入 Relay 服务。
-2. Relay 将消息路由到绑定设备。
-3. 设备在本机调用 Codex App Server 执行。
-4. 执行结果回到 Relay，再转发 Telegram。
+Data flow:
+1. Telegram message reaches relay.
+2. Relay routes to bound device.
+3. Device calls local Codex App Server.
+4. Result returns through relay to Telegram.
 
-## 默认保留策略
+Stored data:
+- Local: config, db, logs.
+- Relay: pairing/binding metadata and operational logs.
 
-- 本地：
-  - `config.json`（设备配置）
-  - `codex_bridge.db`（绑定与执行状态）
-  - `agent.log`
-- Relay：
-  - 配对会话和设备绑定（内存实现，后续可接 PostgreSQL）
-  - 运行日志（默认不持久化完整对话正文）
+Security notes:
+- `deviceAccessToken` is stored in Keychain.
+- Transport uses HTTPS/WSS when configured.
+- Approvals require explicit allow/deny.
 
-## 敏感信息处理
+## 中文
+默认模型：`Relay + 本地 Codex 执行`。
 
-- `deviceAccessToken` 存储在 macOS Keychain，不落地明文配置文件。
-- Relay 与设备通过 TLS（`https/wss`）通信。
-- 审批操作需显式确认（/approve / /deny）。
+数据流：
+1. Telegram 消息进入 relay。
+2. Relay 路由到绑定设备。
+3. 设备调用本地 Codex App Server。
+4. 结果经 relay 返回 Telegram。
 
-## 首版限制
+存储数据：
+- 本地：配置、数据库、日志。
+- Relay：配对/绑定元数据与运行日志。
 
-- 首版不提供端到端加密。
-- 首版默认单 Telegram 账号绑定单设备。
+安全说明：
+- `deviceAccessToken` 存储在 Keychain。
+- 传输层建议使用 HTTPS/WSS。
+- 审批必须显式允许或拒绝。

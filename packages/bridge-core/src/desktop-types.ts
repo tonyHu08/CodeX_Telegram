@@ -1,3 +1,5 @@
+import type { BridgeLocale } from './i18n';
+
 export type HealthCode =
   | 'OK'
   | 'CODEX_NOT_FOUND'
@@ -26,6 +28,7 @@ export interface DesktopConfig {
   selectedThreadId: string | null;
   autoStartAgent: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  locale: BridgeLocale;
 }
 
 export interface PairingSession {

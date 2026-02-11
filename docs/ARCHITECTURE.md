@@ -1,66 +1,63 @@
-# 架构与数据流（Desktop + Relay）
+# Architecture / 架构
 
-## 三层架构
-
+## English
+### Layers
 1. `packages/bridge-core`
-   - `BridgeAgent`：Codex 执行编排
+   - `BridgeAgent`: turn orchestration
+   - `runHealthChecks`: environment checks
+   - `ConfigStore`: local config
+   - `LaunchdServiceManager`: background service control
+2. `apps/desktop`
+   - Electron main process: IPC, pairing, relay connection, tray/menu, service control
+   - React renderer: setup wizard + advanced settings
+3. `services/cloud-relay`
+   - pairing API
+   - device WebSocket stream
+   - Telegram bot ingress/egress
+
+### First-time pairing flow
+1. Desktop calls `POST /v1/pairing/sessions`.
+2. Relay returns `pairingSessionId + qrPayload + expiresAt`.
+3. User scans QR in Telegram (`/start pair_<id>_<code>`).
+4. Relay confirms pairing and issues `deviceAccessToken`.
+5. Desktop polls `GET /v1/pairing/sessions/:id` and stores token in Keychain.
+6. Desktop connects to `wss://.../v1/devices/stream?token=...`.
+
+### Remote execution flow
+1. Telegram message arrives.
+2. Relay routes message to bound device.
+3. Device invokes `BridgeAgent.handleIncomingMessage`.
+4. `BridgeAgent` executes turn via `codex app-server`.
+5. Device emits `executionStatus/finalResponse`.
+6. Relay forwards results back to Telegram.
+
+## 中文
+### 分层结构
+1. `packages/bridge-core`
+   - `BridgeAgent`：turn 执行编排
    - `runHealthChecks`：环境检测
    - `ConfigStore`：本地配置
-   - `LaunchdServiceManager`：后台常驻控制
+   - `LaunchdServiceManager`：后台服务控制
 2. `apps/desktop`
-   - Electron 主进程：IPC、配对、Relay 连接、服务控制
-   - React 渲染层：向导、状态页、线程绑定
+   - Electron 主进程：IPC、配对、relay 连接、菜单栏、服务控制
+   - React 渲染层：初始化向导 + 高级配置
 3. `services/cloud-relay`
-   - 配对会话 API
+   - 配对 API
    - 设备 WebSocket 通道
-   - Telegram Bot 消息入口/出口
+   - Telegram 入口与回包
 
-## 首次配对流
-
-1. 桌面端 `startPairing` 调用 `POST /v1/pairing/sessions`。
+### 首次配对流程
+1. 桌面端调用 `POST /v1/pairing/sessions`。
 2. Relay 返回 `pairingSessionId + qrPayload + expiresAt`。
 3. 用户在 Telegram 扫码（`/start pair_<id>_<code>`）。
-4. Relay 确认配对并生成 `deviceAccessToken`。
-5. 桌面端轮询 `GET /v1/pairing/sessions/:id`，拿到 token 后写入 Keychain。
+4. Relay 确认配对并签发 `deviceAccessToken`。
+5. 桌面端轮询 `GET /v1/pairing/sessions/:id`，并写入 Keychain。
 6. 桌面端通过 `wss://.../v1/devices/stream?token=...` 建连。
 
-## 远程执行流
-
-1. Telegram 用户发送文本给共享 Bot。
-2. Relay 根据 chat 绑定关系将消息推送给对应设备。
-3. 设备收到 `incomingUserMessage`，调用 `BridgeAgent.handleIncomingMessage`。
-4. `BridgeAgent` 使用 `codex app-server` 执行 turn。
+### 远程执行流程
+1. Telegram 消息到达 relay。
+2. Relay 按绑定关系路由到设备。
+3. 设备调用 `BridgeAgent.handleIncomingMessage`。
+4. `BridgeAgent` 通过 `codex app-server` 执行 turn。
 5. 设备回传 `executionStatus/finalResponse`。
-6. Relay 转发到 Telegram。
-
-## 审批流
-
-1. Codex 发出审批请求。
-2. 设备向 Relay 回传 `approvalRequest`。
-3. Relay 发送 Telegram 审批提示（`/approve` / `/deny`）。
-4. 用户回复命令后，Relay 向设备下发 `approvalDecision`。
-5. 设备调用 `BridgeAgent.applyApprovalDecision`。
-
-## 关键本地路径
-
-- `$HOME/.codex-bridge/config.json`
-- `$HOME/.codex-bridge/data/codex_bridge.db`
-- `$HOME/.codex-bridge/logs/agent.log`
-
-## 关键接口
-
-### 本地 IPC
-
-- `ipc.getHealth()`
-- `ipc.startPairing()`
-- `ipc.bindThread(threadId)`
-- `ipc.getCurrentStatus()`
-- `ipc.serviceControl(action)`
-
-### Relay API
-
-- `POST /v1/pairing/sessions`
-- `GET /v1/pairing/sessions/:id`
-- `POST /v1/pairing/sessions/:id/confirm`
-- `GET /v1/devices/me`
-- `WS /v1/devices/stream`
+6. Relay 转发回 Telegram。

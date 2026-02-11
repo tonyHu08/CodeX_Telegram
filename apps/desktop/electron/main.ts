@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } from 'electron';
 import WebSocket from 'ws';
 import keytar from 'keytar';
 import { startLocalRelay, type LocalRelayHandle } from './local-relay';
@@ -9,9 +9,13 @@ import {
   BridgeAgent,
   ConfigStore,
   LaunchdServiceManager,
+  localeText,
+  normalizeLocale,
+  type BridgeLocale,
   type ServiceStatus,
   type DeviceInboundEvent,
   type DeviceOutboundEvent,
+  type HealthReport,
   type PairingSession,
   type PairingStatus,
 } from '@codex-bridge/bridge-core';
@@ -30,6 +34,29 @@ type RelaySettings = {
   telegramBotToken: string;
   relayBotUsername: string;
 };
+
+type WindowMode = 'onboarding' | 'advanced';
+type WindowFocusSection = 'phone' | 'autostart' | 'bot' | null;
+type RemoteState = 'online' | 'partial' | 'offline';
+
+type AppSnapshot = {
+  healthOk: boolean;
+  botConfigured: boolean;
+  relayRunning: boolean;
+  relayConnected: boolean;
+  paired: boolean;
+  threadBound: boolean;
+  onboardingStep: 1 | 2 | 3 | 4 | 5;
+  remoteState: RemoteState;
+  locale: BridgeLocale;
+  selectedThreadId: string | null;
+  botUsername: string | null;
+  lastError: string | null;
+};
+
+function withLocale(locale: BridgeLocale, zh: string, en: string): string {
+  return localeText(locale, zh, en);
+}
 
 function isExecutable(filePath: string): boolean {
   try {
@@ -84,13 +111,13 @@ function relayWsUrl(baseUrl: string): string {
   return `${asWs.replace(/\/$/, '')}/v1/devices/stream`;
 }
 
-function normalizeRelayBaseUrl(value: string): string {
+function normalizeRelayBaseUrl(value: string, locale: BridgeLocale): string {
   const normalized = value.trim().replace(/\/+$/, '');
   if (!normalized) {
-    throw new Error('Relay 地址不能为空');
+    throw new Error(withLocale(locale, '远程服务地址不能为空', 'Remote service URL is required'));
   }
   if (!/^https?:\/\//i.test(normalized)) {
-    throw new Error('Relay 地址必须以 http:// 或 https:// 开头');
+    throw new Error(withLocale(locale, '远程服务地址必须以 http:// 或 https:// 开头', 'Remote service URL must start with http:// or https://'));
   }
   return normalized;
 }
@@ -160,6 +187,32 @@ function readJsonFileIfExists(filePath: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function createTrayIconByState(state: RemoteState) {
+  const bg =
+    state === 'online'
+      ? '#1d7be5'
+      : state === 'partial'
+        ? '#c89a2b'
+        : '#7e8a9d';
+  const fg =
+    state === 'online'
+      ? '#ffffff'
+      : state === 'partial'
+        ? '#fffdf7'
+        : '#f2f4f7';
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+  <rect x="1.5" y="1.5" width="15" height="15" rx="4" fill="${bg}"/>
+  <rect x="4.2" y="5.1" width="9.6" height="1.2" rx="0.6" fill="${fg}" opacity="0.95"/>
+  <rect x="4.2" y="11.7" width="9.6" height="1.2" rx="0.6" fill="${fg}" opacity="0.95"/>
+  <path d="M7.3 6.9a2.2 2.2 0 1 0 0 4.2" fill="none" stroke="${fg}" stroke-width="1.05" stroke-linecap="round"/>
+  <path d="M9.9 6.9h1.9a1.1 1.1 0 0 1 0 2.2H9.9zM9.9 9.1h2.1a1.15 1.15 0 0 1 0 2.3H9.9z" fill="none" stroke="${fg}" stroke-width="0.85" stroke-linejoin="round"/>
+</svg>`.trim();
+  const icon = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
+  icon.setTemplateImage(false);
+  return icon.resize({ width: 18, height: 18 });
 }
 
 function findMonorepoRoot(): string | null {
@@ -335,6 +388,7 @@ class DesktopRuntime {
   private readonly relay: RelayConnection;
   private relayManagedByApp = false;
   private inMemoryDeviceToken: string | null = null;
+  private lastHealthReport: HealthReport | null = null;
 
   constructor() {
     fs.mkdirSync(dataRoot(), { recursive: true });
@@ -353,6 +407,7 @@ class DesktopRuntime {
       requestTimeoutMs: 60_000,
       turnTimeoutMs: 0,
       stuckTurnResetMs: 0,
+      locale: cfg.locale,
     });
 
     this.launchdManager = new LaunchdServiceManager(AGENT_LABEL);
@@ -443,6 +498,11 @@ class DesktopRuntime {
 
   async start(): Promise<void> {
     await this.agent.start();
+    try {
+      this.lastHealthReport = await this.agent.getHealth();
+    } catch {
+      this.lastHealthReport = null;
+    }
     await this.ensureDeviceTokenRestoredIfMissing();
     const cfg = this.configStore.load();
     if (!this.agent.getBinding() && cfg.selectedThreadId) {
@@ -516,6 +576,7 @@ class DesktopRuntime {
   }
 
   private resolveRelayRuntimeEnv(): Record<string, string> {
+    const cfg = this.configStore.load();
     const dataConfig = readJsonFileIfExists(RELAY_CONFIG_PATH);
     const dataEnv = readEnvFileIfExists(path.join(dataRoot(), 'relay.env'));
     const repoRoot = findMonorepoRoot();
@@ -560,6 +621,7 @@ class DesktopRuntime {
       RELAY_STORE_PATH: LOCAL_RELAY_STORE_PATH,
       TELEGRAM_BOT_TOKEN: telegramBotToken,
       RELAY_BOT_USERNAME: relayBotUsername,
+      BRIDGE_LOCALE: cfg.locale,
     };
   }
 
@@ -623,9 +685,20 @@ class DesktopRuntime {
     return this.configStore.load();
   }
 
+  setLocale(locale: BridgeLocale) {
+    const normalized = normalizeLocale(locale);
+    this.agent.setLocale(normalized);
+    this.configStore.update((cfg) => ({ ...cfg, locale: normalized }));
+    if (this.shouldManageRelayLifecycle()) {
+      this.repairManagedLocalRelay();
+    }
+    return this.configStore.load();
+  }
+
   setRelayBaseUrl(relayBaseUrl: string) {
-    const normalized = normalizeRelayBaseUrl(relayBaseUrl);
-    this.configStore.update((cfg) => ({ ...cfg, relayBaseUrl: normalized }));
+    const cfg = this.configStore.load();
+    const normalized = normalizeRelayBaseUrl(relayBaseUrl, cfg.locale);
+    this.configStore.update((current) => ({ ...current, relayBaseUrl: normalized }));
     return this.configStore.load();
   }
 
@@ -658,8 +731,13 @@ class DesktopRuntime {
       } catch (fallbackError: any) {
         const primaryMessage = primaryError?.message || String(primaryError);
         const fallbackMessage = fallbackError?.message || String(fallbackError);
+        const locale = cfg.locale;
         throw new Error(
-          `当前远程地址不可达（${primaryBase}）。本地服务回退失败：${fallbackMessage}。原始错误：${primaryMessage}`,
+          withLocale(
+            locale,
+            `当前远程地址不可达（${primaryBase}）。本地服务回退失败：${fallbackMessage}。原始错误：${primaryMessage}`,
+            `Primary remote URL is unreachable (${primaryBase}). Local fallback failed: ${fallbackMessage}. Original error: ${primaryMessage}`,
+          ),
         );
       }
     }
@@ -673,6 +751,7 @@ class DesktopRuntime {
       relayBaseUrl?: string;
       websocketClients?: number;
       telegramEnabled?: boolean;
+      botUsername?: string;
     }>(`${baseUrl}/healthz`);
     return {
       ...health,
@@ -682,7 +761,9 @@ class DesktopRuntime {
   }
 
   async getHealth() {
-    return await this.agent.getHealth();
+    const report = await this.agent.getHealth();
+    this.lastHealthReport = report;
+    return report;
   }
 
   async startPairing(): Promise<PairingSession> {
@@ -730,6 +811,76 @@ class DesktopRuntime {
     return {
       ...base,
       hasDeviceToken: Boolean(token),
+    };
+  }
+
+  private computeOnboardingStep(input: {
+    healthOk: boolean;
+    botConfigured: boolean;
+    paired: boolean;
+  }): 1 | 2 | 3 | 4 | 5 {
+    if (!input.healthOk) {
+      return 1;
+    }
+    if (!input.botConfigured) {
+      return 2;
+    }
+    if (!input.paired) {
+      return 3;
+    }
+    return 5;
+  }
+
+  private computeRemoteState(input: {
+    healthOk: boolean;
+    botConfigured: boolean;
+    relayRunning: boolean;
+    paired: boolean;
+    relayConnected: boolean;
+  }): RemoteState {
+    if (!input.healthOk || !input.botConfigured || !input.relayRunning) {
+      return 'offline';
+    }
+    if (!input.paired || !input.relayConnected) {
+      return 'partial';
+    }
+    return 'online';
+  }
+
+  async getAppSnapshot(): Promise<AppSnapshot> {
+    const status = await this.getCurrentStatus();
+    const relaySettings = this.getRelaySettings();
+    const relayService = this.relayServiceStatus();
+    const relayHealth = await this.checkRelayHealth().catch(() => null);
+    const healthOk = this.lastHealthReport?.ok ?? false;
+    const botConfigured = relaySettings.telegramBotToken.trim().length > 0;
+    const paired = Boolean(status.relayConnected) || Boolean(status.hasDeviceToken);
+    const threadBound = Boolean(status.selectedThreadId);
+    const remoteState = this.computeRemoteState({
+      healthOk,
+      botConfigured,
+      relayRunning: relayService.running,
+      paired,
+      relayConnected: status.relayConnected,
+    });
+
+    return {
+      healthOk,
+      botConfigured,
+      relayRunning: relayService.running,
+      relayConnected: status.relayConnected,
+      paired,
+      threadBound,
+      onboardingStep: this.computeOnboardingStep({
+        healthOk,
+        botConfigured,
+        paired,
+      }),
+      remoteState,
+      locale: this.configStore.load().locale,
+      selectedThreadId: status.selectedThreadId,
+      botUsername: relayHealth?.botUsername || null,
+      lastError: status.lastError,
     };
   }
 
@@ -787,9 +938,33 @@ class DesktopRuntime {
   async reconnectRelay() {
     await this.relay.reconnectNow();
   }
+
+  async toggleRelay(shouldRun: boolean): Promise<ServiceStatus> {
+    if (!this.shouldManageRelayLifecycle()) {
+      return this.relayServiceStatus();
+    }
+    if (shouldRun) {
+      this.ensureManagedLocalRelayInstalled();
+      this.relayLaunchdManager.start();
+      this.relayManagedByApp = true;
+      await this.relay.reconnectNow();
+      return this.relayServiceStatus();
+    }
+
+    this.relayLaunchdManager.stop();
+    this.relayManagedByApp = false;
+    await this.relay.disconnect();
+    return this.relayServiceStatus();
+  }
 }
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let trayRefreshTimer: NodeJS.Timeout | null = null;
+let trayIconState: RemoteState | null = null;
+let isQuitting = false;
+let currentWindowMode: WindowMode = 'onboarding';
+let currentWindowFocusSection: WindowFocusSection = null;
 const runtime = new DesktopRuntime();
 let localRelayHandle: LocalRelayHandle | null = null;
 const isRelayProcess = process.argv.includes('--relay');
@@ -801,14 +976,44 @@ if (!singleInstanceLock) {
   app.quit();
 }
 
+function updateDockVisibility(visible: boolean) {
+  if (!app.dock) {
+    return;
+  }
+  try {
+    if (visible) {
+      app.dock.show();
+    } else {
+      app.dock.hide();
+    }
+  } catch {
+    // ignore dock visibility errors
+  }
+}
+
+function emitWindowModeChanged() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.webContents.send('window-mode-changed', {
+    mode: currentWindowMode,
+    focusSection: currentWindowFocusSection,
+  });
+}
+
 function createMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return;
+  }
+
   const preloadPath = path.join(__dirname, 'preload.js');
   mainWindow = new BrowserWindow({
-    width: 1140,
+    width: 1080,
     height: 760,
-    minWidth: 980,
-    minHeight: 640,
-    backgroundColor: '#0f1624',
+    minWidth: 920,
+    minHeight: 620,
+    show: false,
+    backgroundColor: '#eef3fb',
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -825,18 +1030,185 @@ function createMainWindow() {
     void mainWindow.loadFile(rendererPath);
   }
 
+  mainWindow.webContents.on('did-finish-load', () => {
+    emitWindowModeChanged();
+  });
+
+  mainWindow.on('close', (event) => {
+    if (isQuitting) {
+      return;
+    }
+    event.preventDefault();
+    mainWindow?.hide();
+    updateDockVisibility(false);
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
 
+function showMainWindow(mode: WindowMode, focusSection: WindowFocusSection = null) {
+  currentWindowMode = mode;
+  currentWindowFocusSection = focusSection;
+  createMainWindow();
+  if (!mainWindow) {
+    return;
+  }
+  emitWindowModeChanged();
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  updateDockVisibility(true);
+}
+
+function hideMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide();
+  }
+  updateDockVisibility(false);
+}
+
+function setTrayIconState(state: RemoteState) {
+  if (!tray) {
+    return;
+  }
+  if (trayIconState === state) {
+    return;
+  }
+  tray.setImage(createTrayIconByState(state));
+  trayIconState = state;
+}
+
+async function refreshTrayMenu() {
+  if (!tray) {
+    return;
+  }
+  const fallbackLocale = runtime.getConfig().locale;
+  const snapshot = await runtime.getAppSnapshot().catch(() => null);
+  if (!snapshot) {
+    setTrayIconState('offline');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      {
+        label: 'Codex Bridge Desktop',
+        click: () => showMainWindow('advanced'),
+      },
+      {
+        label: withLocale(fallbackLocale, '⚪ 状态读取失败（点击重试）', '⚪ Failed to read status (click to retry)'),
+        click: () => {
+          void refreshTrayMenu();
+        },
+      },
+      { type: 'separator' },
+      {
+        label: withLocale(fallbackLocale, '打开高级配置…', 'Open advanced settings…'),
+        click: () => showMainWindow('advanced'),
+      },
+      {
+        label: withLocale(fallbackLocale, '退出 Codex Bridge', 'Quit Codex Bridge'),
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]));
+    return;
+  }
+
+  setTrayIconState(snapshot.remoteState);
+  const locale = snapshot.locale;
+
+  const globalStatusLabel =
+    snapshot.remoteState === 'online'
+      ? withLocale(locale, '🟢 状态：在线', '🟢 Status: Online')
+      : snapshot.remoteState === 'partial'
+        ? withLocale(locale, '🟡 状态：部分可用', '🟡 Status: Partially Ready')
+        : withLocale(locale, '🔴 状态：离线', '🔴 Status: Offline');
+  const remoteSwitchLabel = snapshot.relayRunning
+    ? withLocale(locale, '🟢 远程开关：已开启（点此暂停）', '🟢 Remote switch: ON (click to pause)')
+    : withLocale(locale, '⚪ 远程开关：已暂停（点此恢复）', '⚪ Remote switch: OFF (click to resume)');
+  const defaultMode: WindowMode = snapshot.onboardingStep < 5 ? 'onboarding' : 'advanced';
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: 'Codex Bridge Desktop',
+      click: () => showMainWindow(defaultMode),
+    },
+    {
+      label: globalStatusLabel,
+      click: () => showMainWindow(defaultMode),
+    },
+    {
+      label: remoteSwitchLabel,
+      click: () => {
+        void runtime.toggleRelay(!snapshot.relayRunning).then(() => refreshTrayMenu());
+      },
+    },
+    { type: 'separator' },
+    ...(snapshot.onboardingStep < 5
+      ? [{
+        label: withLocale(locale, '打开初始化向导…', 'Open setup wizard…'),
+        click: () => showMainWindow('onboarding'),
+      }]
+      : []),
+    {
+      label: withLocale(locale, '打开高级配置…', 'Open advanced settings…'),
+      click: () => showMainWindow('advanced'),
+    },
+    {
+      label: withLocale(locale, '重新配对手机…', 'Repair phone pairing…'),
+      click: () => showMainWindow('advanced', 'phone'),
+    },
+    { type: 'separator' },
+    {
+      label: withLocale(locale, '刷新状态', 'Refresh status'),
+      click: () => {
+        void refreshTrayMenu();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: withLocale(locale, '退出 Codex Bridge', 'Quit Codex Bridge'),
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setToolTip(withLocale(locale, 'Codex Bridge Desktop（手机远程）', 'Codex Bridge Desktop (mobile remote)'));
+  tray.setContextMenu(menu);
+}
+
+function createTray() {
+  if (tray || isAgentProcess || isRelayProcess) {
+    return;
+  }
+  tray = new Tray(createTrayIconByState('offline'));
+  trayIconState = 'offline';
+  tray.on('click', () => {
+    void refreshTrayMenu();
+    tray?.popUpContextMenu();
+  });
+
+  void refreshTrayMenu();
+  trayRefreshTimer = setInterval(() => {
+    void refreshTrayMenu();
+  }, 4000);
+  trayRefreshTimer.unref();
+}
+
 async function registerIpcHandlers() {
   ipcMain.handle('ipc.getConfig', async () => runtime.getConfig());
+  ipcMain.handle('ipc.setLocale', async (_evt, locale: BridgeLocale) => runtime.setLocale(locale));
   ipcMain.handle('ipc.getRelaySettings', async () => runtime.getRelaySettings());
   ipcMain.handle('ipc.setRelaySettings', async (_evt, relaySettings: Partial<RelaySettings>) => runtime.setRelaySettings(relaySettings));
   ipcMain.handle('ipc.setRelayBaseUrl', async (_evt, relayBaseUrl: string) => runtime.setRelayBaseUrl(relayBaseUrl));
   ipcMain.handle('ipc.checkRelayHealth', async () => await runtime.checkRelayHealth());
   ipcMain.handle('ipc.getHealth', async () => await runtime.getHealth());
+  ipcMain.handle('ipc.getAppSnapshot', async () => await runtime.getAppSnapshot());
   ipcMain.handle('ipc.startPairing', async () => await runtime.startPairing());
   ipcMain.handle('ipc.checkPairingStatus', async (_evt, pairingSessionId: string) => await runtime.checkPairingStatus(pairingSessionId));
   ipcMain.handle('ipc.listThreads', async () => await runtime.listThreads());
@@ -847,6 +1219,24 @@ async function registerIpcHandlers() {
   ipcMain.handle('ipc.repairLocalRelay', async () => runtime.repairManagedLocalRelay());
   ipcMain.handle('ipc.clearPairing', async () => await runtime.clearPairing());
   ipcMain.handle('ipc.reconnectRelay', async () => await runtime.reconnectRelay());
+  ipcMain.handle('ipc.toggleRelay', async (_evt, shouldRun: boolean) => await runtime.toggleRelay(!!shouldRun));
+  ipcMain.handle('ipc.getWindowMode', async () => ({
+    mode: currentWindowMode,
+    focusSection: currentWindowFocusSection,
+  }));
+  ipcMain.handle('ipc.setWindowMode', async (_evt, mode: WindowMode, focusSection?: WindowFocusSection) => {
+    currentWindowMode = mode === 'advanced' ? 'advanced' : 'onboarding';
+    currentWindowFocusSection = focusSection || null;
+    emitWindowModeChanged();
+    return {
+      mode: currentWindowMode,
+      focusSection: currentWindowFocusSection,
+    };
+  });
+  ipcMain.handle('ipc.hideWindow', async () => {
+    hideMainWindow();
+    return { ok: true };
+  });
 }
 
 async function bootstrap() {
@@ -856,12 +1246,7 @@ async function bootstrap() {
 
   if (requiresSingleInstanceLock) {
     app.on('second-instance', () => {
-      if (mainWindow) {
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore();
-        }
-        mainWindow.focus();
-      }
+      showMainWindow('advanced');
     });
   }
 
@@ -877,6 +1262,7 @@ async function bootstrap() {
       persistPath: process.env.RELAY_STORE_PATH || LOCAL_RELAY_STORE_PATH,
       telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
       relayBotUsername: process.env.RELAY_BOT_USERNAME || '',
+      locale: normalizeLocale(process.env.BRIDGE_LOCALE),
     });
     if (app.dock) {
       app.dock.hide();
@@ -892,20 +1278,26 @@ async function bootstrap() {
 
   await runtime.start();
   if (!isAgentMode) {
-    createMainWindow();
+    createTray();
+    const snapshot = await runtime.getAppSnapshot().catch(() => null);
+    if (!snapshot || snapshot.onboardingStep < 5) {
+      showMainWindow('onboarding');
+    } else {
+      hideMainWindow();
+    }
   } else if (app.dock) {
     app.dock.hide();
   }
 
   app.on('activate', () => {
-    if (!isAgentMode && BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
-    }
-  });
-
-  app.on('window-all-closed', () => {
     if (!isAgentMode) {
-      app.quit();
+      void runtime.getAppSnapshot()
+        .then((snapshot) => {
+          showMainWindow(snapshot.onboardingStep < 5 ? 'onboarding' : 'advanced');
+        })
+        .catch(() => {
+          showMainWindow('advanced');
+        });
     }
   });
 }
@@ -916,6 +1308,12 @@ void bootstrap().catch((error) => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
+  if (trayRefreshTimer) {
+    clearInterval(trayRefreshTimer);
+    trayRefreshTimer = null;
+  }
+
   if (process.argv.includes('--relay')) {
     if (localRelayHandle) {
       void localRelayHandle.stop();

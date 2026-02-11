@@ -6,7 +6,7 @@
   "scripts": {
     "build:core": "npm --prefix ../../packages/bridge-core run build",
     "build:renderer": "vite build",
-    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:electron": "tsc -p tsconfig.electron.json && mkdir -p dist/electron/assets && cp -f electron/assets/trayTemplate.png dist/electron/assets/trayTemplate.png && cp -f electron/assets/trayTemplate@2x.png dist/electron/assets/trayTemplate@2x.png",
     "build": "npm run build:core && npm run build:renderer && npm run build:electron",
     "typecheck": "npm run build:core && tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.electron.json",
     "start": "electron dist/electron/main.js",
@@ -49,6 +49,7 @@
       "buildResources": "build"
     },
     "mac": {
+      "icon": "build/icon.icns",
       "target": [
         "dmg"
       ],

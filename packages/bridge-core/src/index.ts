@@ -7,3 +7,4 @@ export * from './logger';
 export * from './runtime-manager';
 export * from './service/launchd-manager';
 export * from './types';
+export * from './i18n';

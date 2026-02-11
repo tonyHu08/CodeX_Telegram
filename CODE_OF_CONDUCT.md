@@ -1,24 +1,21 @@
-# Code of Conduct
+# Code of Conduct / 行为准则
 
-## Our Standards
+## English
+Participants are expected to:
+- Be respectful and constructive.
+- Focus on technical issues, not personal attacks.
+- Share verifiable context.
 
-为保证社区协作质量，参与者应：
+Unacceptable behavior includes harassment, discrimination, threats, doxxing, or disruptive spam.
 
-- 尊重不同背景与观点。
-- 聚焦问题本身，避免人身攻击。
-- 在讨论中提供可验证的信息与上下文。
-- 对反馈保持建设性和专业性。
+Maintainers may warn, limit interaction, or remove contributions that violate this policy.
 
-不可接受的行为包括但不限于：
+## 中文
+参与者应当：
+- 保持尊重与建设性。
+- 聚焦技术问题，避免人身攻击。
+- 提供可验证的上下文信息。
 
-- 侮辱、骚扰、歧视、威胁。
-- 恶意刷屏或故意破坏讨论秩序。
-- 未经允许公开他人的敏感信息。
+不可接受行为包括骚扰、歧视、威胁、泄露隐私、恶意刷屏等。
 
-## Enforcement
-
-维护者有权对不当行为采取必要措施，包括警告、限制互动、拒绝或移除贡献。
-
-## Scope
-
-本准则适用于仓库 issue、pull request、讨论区及相关协作渠道。
+维护者可对违规行为采取警告、限制互动或移除贡献等措施。

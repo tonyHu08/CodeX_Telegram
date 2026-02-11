@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 const desktopApi = {
   getConfig: async () => await ipcRenderer.invoke('ipc.getConfig'),
+  setLocale: async (locale: 'zh' | 'en') => await ipcRenderer.invoke('ipc.setLocale', locale),
+  getAppSnapshot: async () => await ipcRenderer.invoke('ipc.getAppSnapshot'),
   getRelaySettings: async () => await ipcRenderer.invoke('ipc.getRelaySettings'),
   setRelaySettings: async (relaySettings: { telegramBotToken?: string; relayBotUsername?: string }) => await ipcRenderer.invoke('ipc.setRelaySettings', relaySettings),
   setRelayBaseUrl: async (relayBaseUrl: string) => await ipcRenderer.invoke('ipc.setRelayBaseUrl', relayBaseUrl),
@@ -17,6 +19,21 @@ const desktopApi = {
   repairLocalRelay: async () => await ipcRenderer.invoke('ipc.repairLocalRelay'),
   clearPairing: async () => await ipcRenderer.invoke('ipc.clearPairing'),
   reconnectRelay: async () => await ipcRenderer.invoke('ipc.reconnectRelay'),
+  toggleRelay: async (shouldRun: boolean) => await ipcRenderer.invoke('ipc.toggleRelay', shouldRun),
+  getWindowMode: async () => await ipcRenderer.invoke('ipc.getWindowMode'),
+  setWindowMode: async (mode: 'onboarding' | 'advanced', focusSection?: 'phone' | 'autostart' | 'bot' | null) => await ipcRenderer.invoke('ipc.setWindowMode', mode, focusSection),
+  hideWindow: async () => await ipcRenderer.invoke('ipc.hideWindow'),
+  onWindowModeChanged: (
+    handler: (payload: { mode: 'onboarding' | 'advanced'; focusSection: 'phone' | 'autostart' | 'bot' | null }) => void,
+  ) => {
+    const listener = (_event: unknown, payload: { mode: 'onboarding' | 'advanced'; focusSection: 'phone' | 'autostart' | 'bot' | null }) => {
+      handler(payload);
+    };
+    ipcRenderer.on('window-mode-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('window-mode-changed', listener);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld('desktopApi', desktopApi);

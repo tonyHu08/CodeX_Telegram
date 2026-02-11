@@ -4,6 +4,8 @@ declare global {
   interface Window {
     desktopApi: {
       getConfig: () => Promise<any>;
+      setLocale: (locale: 'zh' | 'en') => Promise<any>;
+      getAppSnapshot: () => Promise<any>;
       getRelaySettings: () => Promise<any>;
       setRelaySettings: (relaySettings: { telegramBotToken?: string; relayBotUsername?: string }) => Promise<any>;
       setRelayBaseUrl: (relayBaseUrl: string) => Promise<any>;
@@ -19,6 +21,13 @@ declare global {
       repairLocalRelay: () => Promise<any>;
       clearPairing: () => Promise<any>;
       reconnectRelay: () => Promise<any>;
+      toggleRelay: (shouldRun: boolean) => Promise<any>;
+      getWindowMode: () => Promise<any>;
+      setWindowMode: (mode: 'onboarding' | 'advanced', focusSection?: 'phone' | 'autostart' | 'bot' | null) => Promise<any>;
+      hideWindow: () => Promise<any>;
+      onWindowModeChanged: (
+        handler: (payload: { mode: 'onboarding' | 'advanced'; focusSection: 'phone' | 'autostart' | 'bot' | null }) => void
+      ) => () => void;
     };
   }
 }

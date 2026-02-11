@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Codex Bridge Icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b2a60"/>
+      <stop offset="100%" stop-color="#0a2451"/>
+    </linearGradient>
+    <linearGradient id="glassHi" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.36"/>
+      <stop offset="70%" stop-color="#ffffff" stop-opacity="0.02"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="cyanGlow" cx="44%" cy="49%" r="30%">
+      <stop offset="0%" stop-color="#2bf1ff" stop-opacity="0.34"/>
+      <stop offset="68%" stop-color="#2bf1ff" stop-opacity="0.09"/>
+      <stop offset="100%" stop-color="#2bf1ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#b6d6ff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#4ed9ff" stop-opacity="0.55"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+
+  <rect x="88" y="118" width="848" height="760" rx="145" fill="#22457f" opacity="0.33"/>
+  <rect x="88" y="118" width="848" height="760" rx="145" fill="url(#glassHi)"/>
+  <rect x="88" y="118" width="848" height="760" rx="145" fill="none" stroke="url(#edge)" stroke-width="8" opacity="0.78"/>
+
+  <circle cx="392" cy="492" r="126" fill="url(#cyanGlow)"/>
+
+  <text x="522" y="606" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Helvetica Neue, Arial, sans-serif" font-size="445" font-weight="820" fill="#ffffff">CB</text>
+  <path d="M376 377a145 145 0 1 0 0 245" fill="none" stroke="#2cf2f3" stroke-width="13" stroke-linecap="round"/>
+</svg>

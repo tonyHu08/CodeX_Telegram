@@ -1,27 +1,37 @@
-# Self-hosting Guide (Advanced)
+# Self-hosting / 自托管
 
-高级用户可自托管 Relay 服务与 Telegram Bot。
+## English
+You can run your own relay and bot.
 
-## 1. 启动 Relay
-
+### Start relay
 ```bash
-cd services/cloud-relay
+cd /Users/junweihu/clawd/codex-remote-bridge/services/cloud-relay
 npm install
 npm run dev
 ```
 
-## 2. 配置环境变量
+### Required env
+- `TELEGRAM_BOT_TOKEN`
+- `RELAY_PUBLIC_BASE_URL`
+- `RELAY_BOT_USERNAME`
 
-- `TELEGRAM_BOT_TOKEN=<your bot token>`
-- `RELAY_PUBLIC_BASE_URL=https://<your-domain>`
-- `RELAY_BOT_USERNAME=<your bot username>`
+### Desktop side
+Set desktop relay URL to your hosted relay endpoint.
 
-## 3. 桌面端接入自托管 Relay
+## 中文
+可以自托管 relay 和 bot。
 
-在桌面 App 设置页将 `relayBaseUrl` 改为你的 Relay 地址。
+### 启动 relay
+```bash
+cd /Users/junweihu/clawd/codex-remote-bridge/services/cloud-relay
+npm install
+npm run dev
+```
 
-## 4. 生产建议
+### 必填环境变量
+- `TELEGRAM_BOT_TOKEN`
+- `RELAY_PUBLIC_BASE_URL`
+- `RELAY_BOT_USERNAME`
 
-- 在反向代理层强制 HTTPS/WSS。
-- 为 Relay 加入请求签名与速率限制。
-- 将内存存储替换为 PostgreSQL + Redis。
+### 桌面端接入
+在桌面端将 relay 地址改为你的自托管地址。

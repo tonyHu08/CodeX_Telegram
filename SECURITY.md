@@ -1,17 +1,17 @@
-# Security Policy
+# Security Policy / 安全策略
 
-## Supported Versions
+## English
+Please do not disclose security vulnerabilities in public issues.
 
-当前仓库以 `main` 分支为主，优先修复最新代码中的安全问题。
+Recommended flow:
+1. Contact maintainers privately.
+2. Share impact, reproduction, and mitigation suggestions.
+3. Coordinate disclosure timeline after fix.
 
-## Reporting a Vulnerability
-
-如果你发现了安全漏洞，请不要在公开 issue 直接披露细节。
+## 中文
+请不要在公开 issue 中直接披露安全漏洞细节。
 
 建议流程：
-
-1. 先通过 GitHub 私密渠道联系维护者（如安全通告/私信）。
-2. 描述影响范围、复现方式、潜在风险。
-3. 维护者确认后会尽快给出修复计划与发布时间。
-
-在漏洞修复并发布前，请避免公开 PoC 与可利用细节。
+1. 通过私密渠道联系维护者。
+2. 提供影响范围、复现方式与修复建议。
+3. 修复完成后协同确认披露时间。

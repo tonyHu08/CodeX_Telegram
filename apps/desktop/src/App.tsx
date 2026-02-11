@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
+
+type WindowMode = 'onboarding' | 'advanced';
+type FocusSection = 'phone' | 'autostart' | 'bot' | null;
+type RemoteState = 'online' | 'partial' | 'offline';
+type Locale = 'zh' | 'en';
 
 type HealthReport = {
   ok: boolean;
@@ -23,46 +28,9 @@ type PairingStatus = {
   deviceAccessToken?: string;
 };
 
-type ThreadSummary = {
-  id: string;
-  preview: string;
-  updatedAt: number;
-  source: string;
-  cwd: string | null;
-};
-
-type AgentStatus = {
-  deviceId: string;
-  selectedThreadId: string | null;
-  pendingApprovals: number;
-  runningTurns: number;
-  relayConnected: boolean;
-  hasDeviceToken?: boolean;
-  lastError: string | null;
-  updatedAt: number;
-};
-
-type DesktopConfig = {
-  deviceId: string;
-  relayBaseUrl: string;
-  selectedThreadId: string | null;
-  autoStartAgent: boolean;
-  logLevel: 'debug' | 'info' | 'warn' | 'error';
-};
-
 type RelaySettings = {
   telegramBotToken: string;
   relayBotUsername: string;
-};
-
-type RelayHealth = {
-  ok: boolean;
-  relayBaseUrl?: string;
-  websocketClients?: number;
-  telegramEnabled?: boolean;
-  botUsername?: string;
-  targetBaseUrl: string;
-  checkedAt: number;
 };
 
 type ServiceState = {
@@ -71,184 +39,436 @@ type ServiceState = {
   raw: string;
 };
 
-function describeServiceState(serviceState: ServiceState | null): string {
-  if (!serviceState) {
-    return '未检测';
-  }
-  if (serviceState.running) {
-    return '已开启（开机后自动在线）';
-  }
-  if (serviceState.installed) {
-    return '已安装，但当前未运行';
-  }
-  if (/Could not find service/i.test(serviceState.raw)) {
-    return '未启用开机自动在线';
-  }
-  return '未启用';
+type AppSnapshot = {
+  healthOk: boolean;
+  botConfigured: boolean;
+  relayRunning: boolean;
+  relayConnected: boolean;
+  paired: boolean;
+  threadBound: boolean;
+  onboardingStep: 1 | 2 | 3 | 4 | 5;
+  remoteState: RemoteState;
+  locale: Locale;
+  selectedThreadId: string | null;
+  botUsername: string | null;
+  lastError: string | null;
+};
+
+type UiDict = {
+  appSubtitleOnboarding: string;
+  appSubtitleAdvanced: string;
+  statePrefix: string;
+  stateOnline: string;
+  statePartial: string;
+  stateOffline: string;
+  statusNotChecked: string;
+  statusInstalledRunning: string;
+  statusInstalledStopped: string;
+  statusDisabled: string;
+  loadingInit: string;
+  loadingHealth: string;
+  loadingSaveBot: string;
+  loadingPairing: string;
+  loadingRepairPairing: string;
+  loadingEnableRemote: string;
+  loadingDisableRemote: string;
+  loadingEnableAutostart: string;
+  loadingDisableAutostart: string;
+  loadingDoneAutoHide: string;
+  errNetwork: string;
+  errBotNotReady: string;
+  progressTitle: string;
+  step1Label: string;
+  step2Label: string;
+  step3Label: string;
+  step1Title: string;
+  step1Desc: string;
+  step1Run: string;
+  step1Rerun: string;
+  refreshStatus: string;
+  step1Ok: string;
+  step2Title: string;
+  step2HelpTitle: string;
+  step2Desc: string;
+  botTokenRequired: string;
+  botUsernameOptional: string;
+  hide: string;
+  show: string;
+  save: string;
+  currentBotConfigured: string;
+  currentBotNotConfigured: string;
+  step3Title: string;
+  step3Desc: string;
+  startPairing: string;
+  regenerateQr: string;
+  refreshPairingStatus: string;
+  openTelegramPairing: string;
+  pairingStatus: string;
+  expiresAt: string;
+  pending: string;
+  doneTitle: string;
+  doneDesc: string;
+  remoteStatusTitle: string;
+  remoteSwitchTitle: string;
+  remoteSwitchDesc: string;
+  remoteReady: string;
+  remotePartialHint: string;
+  remoteOfflineHint: string;
+  repairPhoneHint: string;
+  repairPhoneAction: string;
+  autostartTitle: string;
+  autostartSwitchTitle: string;
+  autostartSwitchDesc: string;
+  refresh: string;
+  botConfigTitle: string;
+  botConfigDesc: string;
+  currentBot: string;
+  unknownBot: string;
+  changeBotHint: string;
+  changeBotAction: string;
+  saveApply: string;
+  cancel: string;
+  botGuideTitle: string;
+  botGuideClose: string;
+  botGuideOpenFather: string;
+  botGuideDone: string;
+  botGuideSteps: string[];
+  language: string;
+  langZh: string;
+  langEn: string;
+};
+
+const UI: Record<Locale, UiDict> = {
+  zh: {
+    appSubtitleOnboarding: '首次配置向导（约 2-3 分钟）',
+    appSubtitleAdvanced: '高级配置',
+    statePrefix: '状态',
+    stateOnline: '在线',
+    statePartial: '部分可用',
+    stateOffline: '离线',
+    statusNotChecked: '未检测',
+    statusInstalledRunning: '已启用并运行',
+    statusInstalledStopped: '已安装，未运行',
+    statusDisabled: '未启用',
+    loadingInit: '加载中...',
+    loadingHealth: '正在检测 Codex 环境...',
+    loadingSaveBot: '正在保存机器人配置...',
+    loadingPairing: '正在创建手机配对...',
+    loadingRepairPairing: '正在准备重新配对...',
+    loadingEnableRemote: '正在恢复远程能力...',
+    loadingDisableRemote: '正在暂停远程能力...',
+    loadingEnableAutostart: '正在启用开机自启...',
+    loadingDisableAutostart: '正在关闭开机自启...',
+    loadingDoneAutoHide: '✅ 配置已就绪，将切换到菜单栏使用...',
+    errNetwork: '网络连接暂不可用，请稍后重试。',
+    errBotNotReady: 'Telegram 机器人尚未就绪，请先确认 Token 配置正确。',
+    progressTitle: '配置进度',
+    step1Label: '步骤 1：环境检测',
+    step2Label: '步骤 2：配置机器人',
+    step3Label: '步骤 3：手机配对',
+    step1Title: '步骤 1：环境检测',
+    step1Desc: '点击检测，确认本机 Codex 环境可用。',
+    step1Run: '开始检测',
+    step1Rerun: '重新检测',
+    refreshStatus: '刷新状态',
+    step1Ok: '✅ 环境可用',
+    step2Title: '步骤 2：配置 Telegram 机器人',
+    step2HelpTitle: '查看机器人配置教学',
+    step2Desc: '填入 Bot Token 并保存，系统会自动进入下一步。',
+    botTokenRequired: 'Bot Token（必填）',
+    botUsernameOptional: 'Bot 用户名（可选）',
+    hide: '隐藏',
+    show: '显示',
+    save: '保存',
+    currentBotConfigured: '当前：机器人已配置。',
+    currentBotNotConfigured: '当前：机器人未配置。',
+    step3Title: '步骤 3：手机配对',
+    step3Desc: '扫码配对后，点击“刷新配对状态”；确认成功后会自动完成配置。',
+    startPairing: '开始配对',
+    regenerateQr: '重新生成二维码',
+    refreshPairingStatus: '刷新配对状态',
+    openTelegramPairing: '打开 Telegram 配对',
+    pairingStatus: '配对状态',
+    expiresAt: '过期时间',
+    pending: 'pending',
+    doneTitle: '配置完成',
+    doneDesc: '已就绪，正在切换到菜单栏模式…',
+    remoteStatusTitle: '远程状态',
+    remoteSwitchTitle: '远程开关',
+    remoteSwitchDesc: '开启后手机可发消息远程操作，关闭后会暂停远程能力。',
+    remoteReady: '手机端可以直接发送消息远程操作 Codex。',
+    remotePartialHint: '基础配置已完成一部分，建议先点击“重新配对”后再试。',
+    remoteOfflineHint: '当前不可用，请先完成配置并恢复远程能力。',
+    repairPhoneHint: '“重新配对手机”只会重建手机绑定关系，不会更换机器人。',
+    repairPhoneAction: '重新配对手机',
+    autostartTitle: '开机自启（Agent）',
+    autostartSwitchTitle: '开机自启',
+    autostartSwitchDesc: '开启后电脑重启会自动恢复远程能力。',
+    refresh: '刷新',
+    botConfigTitle: '机器人配置（高级）',
+    botConfigDesc: '仅在你要更换 Telegram 机器人账号时才需要修改。',
+    currentBot: '当前机器人',
+    unknownBot: '未识别',
+    changeBotHint: '“更换机器人”会替换 Token；通常不需要频繁操作。',
+    changeBotAction: '更换机器人',
+    saveApply: '保存并应用',
+    cancel: '取消',
+    botGuideTitle: '如何创建 Telegram 机器人',
+    botGuideClose: '关闭',
+    botGuideOpenFather: '打开 BotFather',
+    botGuideDone: '我知道了',
+    botGuideSteps: [
+      '打开 Telegram 搜索并进入 @BotFather。',
+      '发送 /newbot，按提示创建机器人。',
+      '复制返回的 Token（如 123456:ABC...）。',
+      '回到本页粘贴 Token，点击“保存”。',
+    ],
+    language: '语言',
+    langZh: '中文',
+    langEn: 'English',
+  },
+  en: {
+    appSubtitleOnboarding: 'First-time setup wizard (about 2-3 min)',
+    appSubtitleAdvanced: 'Advanced settings',
+    statePrefix: 'Status',
+    stateOnline: 'Online',
+    statePartial: 'Partially ready',
+    stateOffline: 'Offline',
+    statusNotChecked: 'Not checked',
+    statusInstalledRunning: 'Installed and running',
+    statusInstalledStopped: 'Installed, not running',
+    statusDisabled: 'Disabled',
+    loadingInit: 'Loading...',
+    loadingHealth: 'Checking Codex environment...',
+    loadingSaveBot: 'Saving bot configuration...',
+    loadingPairing: 'Creating mobile pairing...',
+    loadingRepairPairing: 'Preparing re-pairing...',
+    loadingEnableRemote: 'Resuming remote access...',
+    loadingDisableRemote: 'Pausing remote access...',
+    loadingEnableAutostart: 'Enabling auto-start...',
+    loadingDisableAutostart: 'Disabling auto-start...',
+    loadingDoneAutoHide: '✅ Setup complete, switching to menu bar mode...',
+    errNetwork: 'Network is temporarily unavailable. Please try again later.',
+    errBotNotReady: 'Telegram bot is not ready yet. Please check your token.',
+    progressTitle: 'Setup progress',
+    step1Label: 'Step 1: Environment check',
+    step2Label: 'Step 2: Configure bot',
+    step3Label: 'Step 3: Phone pairing',
+    step1Title: 'Step 1: Environment check',
+    step1Desc: 'Run checks to confirm Codex is available on this Mac.',
+    step1Run: 'Run checks',
+    step1Rerun: 'Run again',
+    refreshStatus: 'Refresh status',
+    step1Ok: '✅ Environment is ready',
+    step2Title: 'Step 2: Configure Telegram bot',
+    step2HelpTitle: 'Open bot setup guide',
+    step2Desc: 'Paste Bot Token and save. The wizard will move to the next step automatically.',
+    botTokenRequired: 'Bot Token (required)',
+    botUsernameOptional: 'Bot username (optional)',
+    hide: 'Hide',
+    show: 'Show',
+    save: 'Save',
+    currentBotConfigured: 'Current: bot configured.',
+    currentBotNotConfigured: 'Current: bot not configured.',
+    step3Title: 'Step 3: Phone pairing',
+    step3Desc: 'Scan QR, then click "Refresh pairing status". The setup completes automatically after confirmation.',
+    startPairing: 'Start pairing',
+    regenerateQr: 'Regenerate QR',
+    refreshPairingStatus: 'Refresh pairing status',
+    openTelegramPairing: 'Open Telegram pairing',
+    pairingStatus: 'Pairing status',
+    expiresAt: 'Expires at',
+    pending: 'pending',
+    doneTitle: 'Setup completed',
+    doneDesc: 'Ready now. Switching to menu bar mode…',
+    remoteStatusTitle: 'Remote status',
+    remoteSwitchTitle: 'Remote switch',
+    remoteSwitchDesc: 'When enabled, you can control Codex from your phone. Disable it to pause remote access.',
+    remoteReady: 'Your phone can now send messages to control Codex remotely.',
+    remotePartialHint: 'Setup is partially complete. Try "Repair phone pairing".',
+    remoteOfflineHint: 'Remote is unavailable. Complete setup and turn remote back on.',
+    repairPhoneHint: '"Repair phone pairing" only rebuilds phone binding and does not change bot account.',
+    repairPhoneAction: 'Repair phone pairing',
+    autostartTitle: 'Auto-start (Agent)',
+    autostartSwitchTitle: 'Auto-start',
+    autostartSwitchDesc: 'When enabled, remote access is restored automatically after reboot.',
+    refresh: 'Refresh',
+    botConfigTitle: 'Bot settings (advanced)',
+    botConfigDesc: 'Only update this when you want to switch to another Telegram bot account.',
+    currentBot: 'Current bot',
+    unknownBot: 'Unknown',
+    changeBotHint: '"Change bot" replaces the token. This is usually infrequent.',
+    changeBotAction: 'Change bot',
+    saveApply: 'Save and apply',
+    cancel: 'Cancel',
+    botGuideTitle: 'How to create a Telegram bot',
+    botGuideClose: 'Close',
+    botGuideOpenFather: 'Open BotFather',
+    botGuideDone: 'Got it',
+    botGuideSteps: [
+      'Open Telegram and search for @BotFather.',
+      'Send /newbot and follow instructions.',
+      'Copy the returned token (for example: 123456:ABC...).',
+      'Come back here, paste token, and click Save.',
+    ],
+    language: 'Language',
+    langZh: '中文',
+    langEn: 'English',
+  },
+};
+
+function getTexts(locale: Locale): UiDict {
+  return UI[locale] || UI.zh;
 }
 
-function describeRelayServiceState(state: ServiceState | null): string {
-  if (!state) {
-    return '未检测';
-  }
-  if (state.running) {
-    return '运行中';
-  }
-  if (state.installed) {
-    return '已安装，未运行';
-  }
-  return '未安装';
-}
-
-function toFriendlyError(error: unknown): string {
+function toFriendlyError(error: unknown, locale: Locale): string {
   const text = error instanceof Error ? error.message : String(error);
+  const ui = getTexts(locale);
   if (/fetch failed/i.test(text)) {
-    return '手机消息通道暂时不可用，请先点“修复手机连接”再重试。';
+    return ui.errNetwork;
   }
-  if (/HTTP 503/i.test(text) && /telegram relay bot not ready/i.test(text)) {
-    return '本机 Telegram 机器人尚未就绪，请稍后重试。';
+  if (/telegram relay bot not ready/i.test(text)) {
+    return ui.errBotNotReady;
   }
   return text;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+function describeAgentService(state: ServiceState | null, locale: Locale): string {
+  const ui = getTexts(locale);
+  if (!state) {
+    return ui.statusNotChecked;
+  }
+  if (state.running) {
+    return ui.statusInstalledRunning;
+  }
+  if (state.installed) {
+    return ui.statusInstalledStopped;
+  }
+  if (/Could not find service/i.test(state.raw || '')) {
+    return ui.statusDisabled;
+  }
+  return ui.statusDisabled;
+}
+
+function describeRemoteState(state: RemoteState | undefined, locale: Locale): string {
+  const ui = getTexts(locale);
+  if (state === 'online') {
+    return ui.stateOnline;
+  }
+  if (state === 'partial') {
+    return ui.statePartial;
+  }
+  return ui.stateOffline;
+}
+
+function formatExpireTime(epochMs: number, locale: Locale): string {
+  if (!epochMs || Number.isNaN(epochMs)) {
+    return '-';
+  }
+  const localeTag = locale === 'en' ? 'en-US' : 'zh-CN';
+  return new Date(epochMs).toLocaleString(localeTag);
 }
 
 export function App() {
-  const [config, setConfig] = useState<DesktopConfig | null>(null);
+  const [windowMode, setWindowMode] = useState<WindowMode>('onboarding');
+  const [focusSection, setFocusSection] = useState<FocusSection>(null);
+
+  const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [health, setHealth] = useState<HealthReport | null>(null);
   const [pairing, setPairing] = useState<PairingSession | null>(null);
   const [pairingStatus, setPairingStatus] = useState<PairingStatus | null>(null);
-  const [pairingQrDataUrl, setPairingQrDataUrl] = useState<string>('');
-  const [threads, setThreads] = useState<ThreadSummary[]>([]);
-  const [status, setStatus] = useState<AgentStatus | null>(null);
-  const [serviceState, setServiceState] = useState<ServiceState | null>(null);
-  const [relayServiceState, setRelayServiceState] = useState<ServiceState | null>(null);
+  const [pairingQrDataUrl, setPairingQrDataUrl] = useState('');
+
   const [relaySettings, setRelaySettings] = useState<RelaySettings>({
     telegramBotToken: '',
     relayBotUsername: '',
   });
-  const [relayHealth, setRelayHealth] = useState<RelayHealth | null>(null);
   const [showBotToken, setShowBotToken] = useState(false);
   const [showBotGuide, setShowBotGuide] = useState(false);
-  const [loading, setLoading] = useState<string>('');
-  const [error, setError] = useState<string>('');
+  const [showBotConfigEditor, setShowBotConfigEditor] = useState(false);
 
-  const serviceStateText = useMemo(() => describeServiceState(serviceState), [serviceState]);
-  const relayServiceStateText = useMemo(() => describeRelayServiceState(relayServiceState), [relayServiceState]);
-  const botConfigured = useMemo(() => relaySettings.telegramBotToken.trim().length > 0, [relaySettings.telegramBotToken]);
-  const envReady = useMemo(() => Boolean(health?.ok), [health?.ok]);
-  const messageServiceReady = useMemo(() => Boolean(relayServiceState?.running), [relayServiceState?.running]);
-  const telegramBotReady = useMemo(() => Boolean(relayHealth?.telegramEnabled), [relayHealth?.telegramEnabled]);
-  const phonePaired = useMemo(
-    () => Boolean(status?.relayConnected) || Boolean(status?.hasDeviceToken) || pairingStatus?.status === 'confirmed',
-    [status?.relayConnected, status?.hasDeviceToken, pairingStatus?.status],
-  );
-  const threadBound = useMemo(() => Boolean(status?.selectedThreadId), [status?.selectedThreadId]);
-  const onboardingStep = useMemo(() => {
-    if (!envReady) {
-      return 1;
-    }
-    // Once phone + thread are ready, keep user in completed state even if
-    // bot connectivity has temporary fluctuations.
-    if (phonePaired && threadBound) {
-      return 5;
-    }
-    // Step 2 only checks whether bot credentials were configured.
-    // Service/network readiness is shown as actionable hints in later steps,
-    // so previously paired users won't be forced back to step 2.
-    if (!botConfigured) {
-      return 2;
-    }
-    if (!phonePaired) {
-      return 3;
-    }
-    if (!threadBound) {
-      return 4;
-    }
-    return 5;
-  }, [envReady, botConfigured, phonePaired, threadBound]);
-  const onboardingDone = onboardingStep === 5;
-  const selectedThread = useMemo(
-    () => threads.find((item) => item.id === status?.selectedThreadId) ?? null,
-    [threads, status?.selectedThreadId],
-  );
-  const telegramBotLink = useMemo(
-    () => (relayHealth?.botUsername ? `https://t.me/${relayHealth.botUsername}` : ''),
-    [relayHealth?.botUsername],
-  );
+  const [agentService, setAgentService] = useState<ServiceState | null>(null);
 
-  async function refreshBasic() {
-    const [cfg, st] = await Promise.all([
-      window.desktopApi.getConfig(),
-      window.desktopApi.getCurrentStatus(),
-    ]);
-    setConfig(cfg);
-    setStatus(st);
+  const [loading, setLoading] = useState('');
+  const [error, setError] = useState('');
+
+  const phoneSectionRef = useRef<HTMLDivElement | null>(null);
+  const autostartSectionRef = useRef<HTMLDivElement | null>(null);
+  const botSectionRef = useRef<HTMLDivElement | null>(null);
+  const autoHideTriggeredRef = useRef(false);
+
+  const locale: Locale = snapshot?.locale || 'zh';
+  const ui = useMemo(() => getTexts(locale), [locale]);
+
+  const stepLabels = useMemo(() => [ui.step1Label, ui.step2Label, ui.step3Label], [ui]);
+  const onboardingStep = snapshot?.onboardingStep || 1;
+  const onboardingUiStep = onboardingStep >= 5 ? stepLabels.length : Math.min(onboardingStep, stepLabels.length);
+  const progressPercent = Math.round((onboardingUiStep / stepLabels.length) * 100);
+  const remoteState = snapshot?.remoteState ?? 'offline';
+  const remoteStateText = describeRemoteState(remoteState, locale);
+  const remoteStateClass = remoteState === 'online' ? 'ok' : remoteState === 'partial' ? 'warn' : 'danger';
+  const remoteEnabled = Boolean(snapshot?.relayRunning);
+  const autoStartEnabled = Boolean(agentService?.installed);
+
+  const agentServiceText = useMemo(() => describeAgentService(agentService, locale), [agentService, locale]);
+
+  async function refreshSnapshot() {
+    const next = await window.desktopApi.getAppSnapshot();
+    setSnapshot(next);
+    return next as AppSnapshot;
   }
 
   async function refreshRelaySettings() {
-    try {
-      const settings = await window.desktopApi.getRelaySettings();
-      setRelaySettings({
-        telegramBotToken: typeof settings?.telegramBotToken === 'string' ? settings.telegramBotToken : '',
-        relayBotUsername: typeof settings?.relayBotUsername === 'string' ? settings.relayBotUsername : '',
-      });
-    } catch (e: any) {
-      setError(toFriendlyError(e));
-    }
+    const settings = await window.desktopApi.getRelaySettings();
+    setRelaySettings({
+      telegramBotToken: typeof settings?.telegramBotToken === 'string' ? settings.telegramBotToken : '',
+      relayBotUsername: typeof settings?.relayBotUsername === 'string' ? settings.relayBotUsername : '',
+    });
   }
 
-  async function refreshRelayServiceState(): Promise<{
-    state: ServiceState | null;
-    health: RelayHealth | null;
-  }> {
-    try {
-      const [state, health] = await Promise.all([
-        window.desktopApi.getRelayServiceStatus(),
-        window.desktopApi.checkRelayHealth().catch(() => null),
-      ]);
-      setRelayServiceState(state);
-      setRelayHealth(health);
-      return { state, health };
-    } catch (e: any) {
-      setError(toFriendlyError(e));
-      return { state: null, health: null };
-    }
+  async function refreshServices() {
+    const agent = await window.desktopApi.serviceControl('status');
+    setAgentService(agent);
   }
 
-  async function runHealth() {
-    setLoading('正在检测 Codex 环境...');
+  async function initializePage() {
+    setLoading(ui.loadingInit);
     setError('');
     try {
-      const report = await window.desktopApi.getHealth();
-      setHealth(report);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
+      const modePayload = await window.desktopApi.getWindowMode();
+      if (modePayload?.mode === 'advanced' || modePayload?.mode === 'onboarding') {
+        setWindowMode(modePayload.mode);
+      }
+      setFocusSection(modePayload?.focusSection || null);
+
+      await Promise.all([
+        refreshSnapshot(),
+        refreshRelaySettings(),
+        refreshServices(),
+      ]);
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
     } finally {
       setLoading('');
     }
   }
 
-  async function repairLocalRelay() {
-    setLoading('正在修复手机连接...');
+  async function runHealth() {
+    setLoading(ui.loadingHealth);
     setError('');
     try {
-      const state = await window.desktopApi.repairLocalRelay();
-      setRelayServiceState(state);
-      await refreshBasic();
-    } catch (e: any) {
-      setError(toFriendlyError(e));
+      const report = await window.desktopApi.getHealth();
+      setHealth(report);
+      await refreshSnapshot();
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
     } finally {
       setLoading('');
     }
   }
 
   async function saveRelaySettings() {
-    setLoading('正在保存机器人配置...');
+    setLoading(ui.loadingSaveBot);
     setError('');
     try {
       const next = await window.desktopApi.setRelaySettings({
@@ -259,61 +479,23 @@ export function App() {
         telegramBotToken: typeof next?.telegramBotToken === 'string' ? next.telegramBotToken : '',
         relayBotUsername: typeof next?.relayBotUsername === 'string' ? next.relayBotUsername : '',
       });
-      await refreshRelayServiceState();
-      await refreshBasic();
-      setLoading('已保存并应用到消息服务。');
-      setTimeout(() => setLoading(''), 1600);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
-      setLoading('');
-    }
-  }
-
-  async function clearRelaySettings() {
-    setLoading('正在清空机器人配置...');
-    setError('');
-    try {
-      const next = await window.desktopApi.setRelaySettings({
-        telegramBotToken: '',
-        relayBotUsername: '',
-      });
-      setRelaySettings({
-        telegramBotToken: typeof next?.telegramBotToken === 'string' ? next.telegramBotToken : '',
-        relayBotUsername: typeof next?.relayBotUsername === 'string' ? next.relayBotUsername : '',
-      });
-      await refreshRelayServiceState();
-      await refreshBasic();
-      setLoading('已清空并应用。');
-      setTimeout(() => setLoading(''), 1200);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
+      const [, updatedSnapshot] = await Promise.all([refreshServices(), refreshSnapshot()]);
+      if (windowMode === 'advanced' && updatedSnapshot?.botConfigured) {
+        setShowBotConfigEditor(false);
+      }
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
+    } finally {
       setLoading('');
     }
   }
 
   async function startPairing() {
-    setLoading('正在创建配对会话...');
+    setLoading(ui.loadingPairing);
     setError('');
     try {
-      // Ensure relay is alive and bot login has settled before requesting pairing.
-      let probe = await refreshRelayServiceState();
-      let ready = Boolean(probe.state?.running) && Boolean(probe.health?.telegramEnabled);
-      if (!ready) {
-        setLoading('正在准备 Telegram 机器人连接...');
-        await window.desktopApi.repairLocalRelay();
-        await delay(900);
-        probe = await refreshRelayServiceState();
-        ready = Boolean(probe.state?.running) && Boolean(probe.health?.telegramEnabled);
-      }
-      if (!ready) {
-        throw new Error('TELEGRAM_BOT_NOT_READY');
-      }
-
       const session = await window.desktopApi.startPairing();
-      const qr = await QRCode.toDataURL(session.qrPayload, {
-        width: 260,
-        margin: 1,
-      });
+      const qr = await QRCode.toDataURL(session.qrPayload, { width: 240, margin: 1 });
       setPairing(session);
       setPairingQrDataUrl(qr);
       setPairingStatus({
@@ -321,14 +503,9 @@ export function App() {
         status: 'pending',
         expiresAt: session.expiresAt,
       });
-      await refreshRelayServiceState();
-    } catch (e: any) {
-      const text = toFriendlyError(e);
-      if (/TELEGRAM_BOT_NOT_READY/.test(text) || /telegram relay bot not ready/i.test(text)) {
-        setError('机器人连接尚未就绪。请回到步骤 2 再点一次“保存并启用”，等待 3-5 秒后重试。若仍失败，请点“修复手机连接”。');
-      } else {
-        setError(text);
-      }
+      await refreshSnapshot();
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
     } finally {
       setLoading('');
     }
@@ -339,469 +516,430 @@ export function App() {
       return;
     }
     try {
-      const result = await window.desktopApi.checkPairingStatus(pairing.pairingSessionId);
-      setPairingStatus(result);
-      await refreshBasic();
-    } catch (e: any) {
-      const message = toFriendlyError(e);
-      if (message.includes('HTTP 404')) {
-        setPairingStatus({
-          pairingSessionId: pairing.pairingSessionId,
-          status: 'expired',
-          expiresAt: Date.now(),
-        });
-        setError('当前配对会话已失效，请点击“开始配对”生成新的二维码。');
-        return;
-      }
-      setError(message);
+      const status = await window.desktopApi.checkPairingStatus(pairing.pairingSessionId);
+      setPairingStatus(status);
+      await refreshSnapshot();
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
     }
   }
 
-  async function copyPairingStartCommand() {
-    if (!pairing?.startCommand) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(pairing.startCommand);
-      setError('');
-      setLoading('已复制配对指令，可直接粘贴到 Telegram。');
-      setTimeout(() => setLoading(''), 1500);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
-    }
-  }
-
-  async function copyPairingLink() {
-    if (!pairing?.qrPayload) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(pairing.qrPayload);
-      setError('');
-      setLoading('已复制配对链接。');
-      setTimeout(() => setLoading(''), 1500);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
-    }
-  }
-
-  async function copyText(text: string, successMessage: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setError('');
-      setLoading(successMessage);
-      setTimeout(() => setLoading(''), 1500);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
-    }
-  }
-
-  async function loadThreads() {
-    setLoading('读取线程列表...');
+  async function restartPairingFlow() {
+    setLoading(ui.loadingRepairPairing);
     setError('');
     try {
-      const rows = await window.desktopApi.listThreads();
-      setThreads(rows);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
+      await window.desktopApi.clearPairing();
+      setPairing(null);
+      setPairingStatus(null);
+      setPairingQrDataUrl('');
+      await Promise.all([refreshSnapshot(), refreshServices()]);
+      setWindowMode('onboarding');
+      setFocusSection('phone');
+      await window.desktopApi.setWindowMode('onboarding', 'phone');
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
     } finally {
       setLoading('');
     }
   }
 
-  async function bindThread(threadId: string) {
-    setLoading('绑定线程...');
+  async function setRemoteEnabled(shouldEnable: boolean) {
+    setLoading(shouldEnable ? ui.loadingEnableRemote : ui.loadingDisableRemote);
     setError('');
     try {
-      await window.desktopApi.bindThread(threadId);
-      await refreshBasic();
-    } catch (e: any) {
-      setError(toFriendlyError(e));
+      await window.desktopApi.toggleRelay(shouldEnable);
+      await refreshAll();
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
     } finally {
       setLoading('');
     }
-  }
-
-  async function serviceControl(action: 'install' | 'start' | 'stop' | 'restart' | 'status' | 'uninstall') {
-    setLoading('正在更新后台服务状态...');
-    setError('');
-    try {
-      const res = await window.desktopApi.serviceControl(action);
-      setServiceState(res);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
-    } finally {
-      setLoading('');
-    }
-  }
-
-  async function refreshServiceState() {
-    await serviceControl('status');
   }
 
   async function enableAutoStart() {
-    setLoading('正在开启开机自动在线...');
+    setLoading(ui.loadingEnableAutostart);
     setError('');
     try {
       await window.desktopApi.serviceControl('install');
-      const started = await window.desktopApi.serviceControl('start');
-      setServiceState(started);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
+      await window.desktopApi.serviceControl('start');
+      await refreshServices();
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
     } finally {
       setLoading('');
     }
   }
 
   async function disableAutoStart() {
-    setLoading('正在关闭开机自动在线...');
+    setLoading(ui.loadingDisableAutostart);
     setError('');
     try {
-      const state = await window.desktopApi.serviceControl('uninstall');
-      setServiceState(state);
-    } catch (e: any) {
-      setError(toFriendlyError(e));
+      await window.desktopApi.serviceControl('uninstall');
+      await refreshServices();
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
     } finally {
       setLoading('');
     }
   }
 
+  async function setAutoStartEnabled(shouldEnable: boolean) {
+    if (shouldEnable) {
+      await enableAutoStart();
+      return;
+    }
+    await disableAutoStart();
+  }
+
+  async function setLocale(nextLocale: Locale) {
+    if (nextLocale === locale) {
+      return;
+    }
+    setError('');
+    try {
+      await window.desktopApi.setLocale(nextLocale);
+      await refreshAll();
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
+    }
+  }
+
+  async function refreshAll() {
+    setError('');
+    try {
+      await Promise.all([refreshSnapshot(), refreshServices(), refreshRelaySettings()]);
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
+    }
+  }
+
   useEffect(() => {
-    void (async () => {
-      await refreshBasic();
-      await runHealth();
-      await refreshRelaySettings();
-      await refreshServiceState();
-      await refreshRelayServiceState();
-    })();
+    void initializePage();
+    const unsubscribe = window.desktopApi.onWindowModeChanged((payload) => {
+      setWindowMode(payload.mode);
+      setFocusSection(payload.focusSection || null);
+    });
+    return () => {
+      unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
-      void refreshBasic();
-    }, 3000);
+      void refreshSnapshot().catch(() => undefined);
+    }, 4000);
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!pairing || (pairingStatus && pairingStatus.status !== 'pending')) {
+    if (!pairing || pairingStatus?.status !== 'pending') {
       return;
     }
     const timer = setInterval(() => {
       void checkPairingStatus();
     }, 3000);
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pairing?.pairingSessionId, pairingStatus?.status]);
 
   useEffect(() => {
-    if (!onboardingDone || threads.length > 0) {
+    if (windowMode !== 'advanced') {
       return;
     }
-    void loadThreads();
-  }, [onboardingDone, threads.length]);
+    const targetRef =
+      focusSection === 'phone'
+        ? phoneSectionRef
+        : focusSection === 'autostart'
+          ? autostartSectionRef
+          : focusSection === 'bot'
+            ? botSectionRef
+            : null;
+    if (targetRef?.current) {
+      targetRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [windowMode, focusSection]);
 
   useEffect(() => {
-    if (!showBotGuide) {
+    if (windowMode !== 'onboarding') {
+      autoHideTriggeredRef.current = false;
       return;
     }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setShowBotGuide(false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [showBotGuide]);
+
+    if (onboardingStep < 5) {
+      autoHideTriggeredRef.current = false;
+      return;
+    }
+
+    if (autoHideTriggeredRef.current) {
+      return;
+    }
+
+    autoHideTriggeredRef.current = true;
+    setLoading(ui.loadingDoneAutoHide);
+    const timer = setTimeout(() => {
+      void window.desktopApi.setWindowMode('advanced');
+      void window.desktopApi.hideWindow();
+      setLoading('');
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [windowMode, onboardingStep, ui.loadingDoneAutoHide]);
+
+  const currentStepPanel = () => {
+    if (onboardingStep === 1) {
+      return (
+        <div className="panel-card">
+          <h3>{ui.step1Title}</h3>
+          <p className="muted">{ui.step1Desc}</p>
+          <div className="actions">
+            <button onClick={() => void runHealth()}>{health ? ui.step1Rerun : ui.step1Run}</button>
+            <button onClick={() => void refreshSnapshot()}>{ui.refreshStatus}</button>
+          </div>
+          {health && (
+            <div className="light-box">
+              <p>{health.ok ? ui.step1Ok : `❌ ${health.code}`}</p>
+              {health.checks.map((item) => (
+                <p key={item.id}>{item.ok ? '✅' : '❌'} {item.message}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (onboardingStep === 2) {
+      return (
+        <div className="panel-card">
+          <div className="title-row">
+            <h3>{ui.step2Title}</h3>
+            <button
+              type="button"
+              className="help-dot"
+              title={ui.step2HelpTitle}
+              onClick={() => setShowBotGuide(true)}
+            >
+              ?
+            </button>
+          </div>
+          <p className="muted">{ui.step2Desc}</p>
+          <div className="input-row">
+            <input
+              type={showBotToken ? 'text' : 'password'}
+              value={relaySettings.telegramBotToken}
+              placeholder={ui.botTokenRequired}
+              onChange={(event) => setRelaySettings((prev) => ({ ...prev, telegramBotToken: event.target.value }))}
+            />
+            <button onClick={() => setShowBotToken((prev) => !prev)}>{showBotToken ? ui.hide : ui.show}</button>
+          </div>
+          <div className="input-row">
+            <input
+              value={relaySettings.relayBotUsername}
+              placeholder={ui.botUsernameOptional}
+              onChange={(event) => setRelaySettings((prev) => ({ ...prev, relayBotUsername: event.target.value }))}
+            />
+          </div>
+          <div className="actions">
+            <button onClick={() => void saveRelaySettings()}>{ui.save}</button>
+            <button onClick={() => void refreshAll()}>{ui.refreshStatus}</button>
+          </div>
+          <p className="muted">{snapshot?.botConfigured ? ui.currentBotConfigured : ui.currentBotNotConfigured}</p>
+        </div>
+      );
+    }
+
+    if (onboardingStep === 3) {
+      return (
+        <div className="panel-card">
+          <h3>{ui.step3Title}</h3>
+          <p className="muted">{ui.step3Desc}</p>
+          <div className="actions">
+            <button onClick={() => void startPairing()}>{pairing ? ui.regenerateQr : ui.startPairing}</button>
+            <button onClick={() => void checkPairingStatus()} disabled={!pairing}>{ui.refreshPairingStatus}</button>
+          </div>
+          {pairing && (
+            <div className="pairing-box">
+              {pairingQrDataUrl && <img className="qr" src={pairingQrDataUrl} alt="pairing qr" />}
+              <div className="actions">
+                <a className="link-button" href={pairing.qrPayload} target="_blank" rel="noreferrer">{ui.openTelegramPairing}</a>
+              </div>
+              <p className="muted">{ui.pairingStatus}: {pairingStatus?.status || ui.pending}</p>
+              <p className="muted">{ui.expiresAt}: {formatExpireTime(pairing.expiresAt, locale)}</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return <div className="panel-card"><h3>{ui.doneTitle}</h3><p className="muted">{ui.doneDesc}</p></div>;
+  };
 
   return (
-    <div className="app-shell">
-      <header className="top-bar">
+    <div className="shell">
+      <header className="header">
         <div>
           <h1>Codex Bridge Desktop</h1>
-          <p>首次使用请按步骤完成配置（约 2-3 分钟）</p>
+          <p>{windowMode === 'onboarding' ? ui.appSubtitleOnboarding : ui.appSubtitleAdvanced}</p>
         </div>
-        <div className={`status-pill ${onboardingDone ? 'online' : 'offline'}`}>
-          <span>{onboardingDone ? '已完成引导' : `引导进行中（第 ${Math.min(onboardingStep, 4)} 步）`}</span>
+        <div className="header-right">
+          <div className="locale-switch" role="group" aria-label={ui.language}>
+            <button
+              type="button"
+              className={locale === 'zh' ? 'active' : ''}
+              onClick={() => void setLocale('zh')}
+            >
+              {ui.langZh}
+            </button>
+            <button
+              type="button"
+              className={locale === 'en' ? 'active' : ''}
+              onClick={() => void setLocale('en')}
+            >
+              {ui.langEn}
+            </button>
+          </div>
+          <div className={`pill ${remoteStateClass}`}>
+            {ui.statePrefix}: {remoteStateText}
+          </div>
         </div>
       </header>
 
       {!!error && <div className="banner error">{error}</div>}
       {!!loading && <div className="banner info">{loading}</div>}
 
-      {!onboardingDone ? (
-        <main className="grid onboarding-grid">
-          <section className="card wizard-steps-card">
-            <h2>快速开始向导</h2>
-            <ol className="steps wizard-steps">
-              <li className={onboardingStep > 1 ? 'done' : onboardingStep === 1 ? 'current' : ''}>
-                <strong>步骤 1：环境检测</strong>
-                <span>确认本机 Codex 可用。</span>
-              </li>
-              <li className={onboardingStep > 2 ? 'done' : onboardingStep === 2 ? 'current' : ''}>
-                <strong>步骤 2：配置机器人</strong>
-                <span>填写 Telegram Bot Token 并保存。</span>
-              </li>
-              <li className={onboardingStep > 3 ? 'done' : onboardingStep === 3 ? 'current' : ''}>
-                <strong>步骤 3：手机配对</strong>
-                <span>扫码或打开链接完成手机绑定。</span>
-              </li>
-              <li className={onboardingStep > 4 ? 'done' : onboardingStep === 4 ? 'current' : ''}>
-                <strong>步骤 4：选择线程</strong>
-                <span>选中一个 Codex 对话线程作为远程目标。</span>
-              </li>
+      {windowMode === 'onboarding' ? (
+        <main className="onboarding-layout">
+          <section className="card steps-card">
+            <h2>{ui.progressTitle}</h2>
+            <div className="progress-track">
+              <div className="progress-value" style={{ width: `${progressPercent}%` }} />
+            </div>
+            <ol className="step-list">
+              {stepLabels.map((label, index) => {
+                const stepNo = index + 1;
+                const state = onboardingStep > stepNo ? 'done' : onboardingStep === stepNo ? 'current' : 'todo';
+                return (
+                  <li key={label} className={state}>
+                    <span>{label}</span>
+                  </li>
+                );
+              })}
             </ol>
-            <div className="panel subtle">
-              <p className="muted">请按顺序完成左侧步骤，右侧会展示当前步骤操作。</p>
+          </section>
+
+          <section className="card action-card">{currentStepPanel()}</section>
+        </main>
+      ) : (
+        <main className="advanced-layout">
+          <section className="card" ref={phoneSectionRef}>
+            <h2>{ui.remoteStatusTitle}</h2>
+            <p className="muted">{ui.statePrefix}: {remoteStateText}</p>
+            <div className="switch-row">
+              <div className="switch-text">
+                <strong>{ui.remoteSwitchTitle}</strong>
+                <p className="muted">{ui.remoteSwitchDesc}</p>
+              </div>
+              <label className="switch-toggle" aria-label={ui.remoteSwitchTitle}>
+                <input
+                  type="checkbox"
+                  checked={remoteEnabled}
+                  onChange={(event) => void setRemoteEnabled(event.target.checked)}
+                />
+                <span className="switch-slider" />
+              </label>
+            </div>
+            <p className="muted">
+              {remoteState === 'online'
+                ? ui.remoteReady
+                : remoteState === 'partial'
+                  ? ui.remotePartialHint
+                  : ui.remoteOfflineHint}
+            </p>
+            <p className="muted">{ui.repairPhoneHint}</p>
+            <div className="actions">
+              <button onClick={() => void restartPairingFlow()}>{ui.repairPhoneAction}</button>
+              <button onClick={() => void refreshAll()}>{ui.refreshStatus}</button>
             </div>
           </section>
 
-          <section className="card wizard-action-card">
-            {onboardingStep === 1 && (
-              <div className="panel step-panel">
-                <h3>步骤 1：环境检测</h3>
-                <p className="muted">点击一次检测按钮，看到“可用”后自动进入下一步。</p>
-                <div className="actions">
-                  <button onClick={() => void runHealth()}>{health ? '重新检测' : '开始检测'}</button>
-                </div>
-                {health && (
-                  <div className="panel subtle">
-                    <p>{health.ok ? '✅ 可用' : `❌ ${health.code}`}</p>
-                    {health.checks.map((item) => (
-                      <p key={item.id}>{item.ok ? '✅' : '❌'} {item.message}</p>
-                    ))}
-                  </div>
-                )}
+          <section className="card" ref={autostartSectionRef}>
+            <h2>{ui.autostartTitle}</h2>
+            <p className="muted">{ui.statePrefix}: {agentServiceText}</p>
+            <div className="switch-row">
+              <div className="switch-text">
+                <strong>{ui.autostartSwitchTitle}</strong>
+                <p className="muted">{ui.autostartSwitchDesc}</p>
               </div>
-            )}
+              <label className="switch-toggle" aria-label={ui.autostartSwitchTitle}>
+                <input
+                  type="checkbox"
+                  checked={autoStartEnabled}
+                  onChange={(event) => void setAutoStartEnabled(event.target.checked)}
+                />
+                <span className="switch-slider" />
+              </label>
+            </div>
+            <div className="actions">
+              <button onClick={() => void refreshServices()}>{ui.refresh}</button>
+            </div>
+          </section>
 
-            {onboardingStep === 2 && (
-              <div className="panel step-panel">
-                <div className="step-title-row">
-                  <h3>步骤 2：填写 Telegram 机器人</h3>
-                  <button
-                    type="button"
-                    className="icon-help-button"
-                    onClick={() => setShowBotGuide(true)}
-                    aria-label="打开机器人配置教学"
-                    title="不会配置？点击查看教学"
-                  >
-                    ?
-                  </button>
-                </div>
-                <p className="muted">输入 Bot Token 后点“保存并启用”，成功后进入下一步。</p>
-                <div className="inline-form">
+          <section className="card" ref={botSectionRef}>
+            <h2>{ui.botConfigTitle}</h2>
+            <p className="muted">{ui.botConfigDesc}</p>
+            <p className="muted">{ui.currentBot}: {snapshot?.botUsername ? `@${snapshot.botUsername}` : ui.unknownBot}</p>
+            <p className="muted">{ui.changeBotHint}</p>
+
+            {(snapshot?.botConfigured && !showBotConfigEditor) ? (
+              <div className="actions">
+                <button onClick={() => setShowBotConfigEditor(true)}>{ui.changeBotAction}</button>
+              </div>
+            ) : (
+              <>
+                <div className="input-row">
                   <input
                     type={showBotToken ? 'text' : 'password'}
                     value={relaySettings.telegramBotToken}
-                    onChange={(e) => setRelaySettings((prev) => ({ ...prev, telegramBotToken: e.target.value }))}
-                    placeholder="Bot Token（必填）"
+                    placeholder={ui.botTokenRequired}
+                    onChange={(event) => setRelaySettings((prev) => ({ ...prev, telegramBotToken: event.target.value }))}
                   />
-                  <button onClick={() => setShowBotToken((v) => !v)}>
-                    {showBotToken ? '隐藏' : '显示'}
-                  </button>
+                  <button onClick={() => setShowBotToken((prev) => !prev)}>{showBotToken ? ui.hide : ui.show}</button>
                 </div>
-                <div className="inline-form">
+                <div className="input-row">
                   <input
                     value={relaySettings.relayBotUsername}
-                    onChange={(e) => setRelaySettings((prev) => ({ ...prev, relayBotUsername: e.target.value }))}
-                    placeholder="Bot 用户名（可选，不填自动识别）"
+                    placeholder={ui.botUsernameOptional}
+                    onChange={(event) => setRelaySettings((prev) => ({ ...prev, relayBotUsername: event.target.value }))}
                   />
                 </div>
                 <div className="actions">
-                  <button onClick={() => void saveRelaySettings()}>保存并启用</button>
-                  <button onClick={() => void refreshRelayServiceState()}>检查机器人连通性</button>
-                  <button onClick={() => void repairLocalRelay()}>修复手机连接</button>
-                  <button onClick={() => void clearRelaySettings()}>清空配置</button>
-                </div>
-                <p className="muted">
-                  当前状态：机器人{botConfigured ? '已配置' : '未配置'}，
-                  手机消息服务{relayServiceStateText}，
-                  机器人连通{telegramBotReady ? '已就绪' : '未就绪'}。
-                </p>
-              </div>
-            )}
-
-            {onboardingStep === 3 && (
-              <div className="panel step-panel">
-                <h3>步骤 3：手机配对</h3>
-                <p className="muted">建议用系统相机扫码；若扫码无反应，请点“打开 Telegram 配对”。</p>
-                {(!messageServiceReady || !telegramBotReady) && (
-                  <p className="muted">
-                    当前手机消息服务{relayServiceStateText}，机器人连通{telegramBotReady ? '已就绪' : '未就绪'}。
-                    若配对报错，请先返回步骤 2 点“检查机器人连通性”或“修复手机连接”。
-                  </p>
-                )}
-                <div className="actions">
-                  <button onClick={() => void startPairing()}>开始配对</button>
-                  <button onClick={() => void checkPairingStatus()}>刷新配对状态</button>
-                </div>
-                {pairing && (
-                  <>
-                    {pairingQrDataUrl && <img className="qr" src={pairingQrDataUrl} alt="pairing qr" />}
-                    <div className="actions">
-                      <a className="link-button" href={pairing.qrPayload} target="_blank" rel="noreferrer">
-                        打开 Telegram 配对
-                      </a>
-                      <button onClick={() => void copyPairingLink()}>复制配对链接</button>
-                      {pairing.startCommand && (
-                        <button onClick={() => void copyPairingStartCommand()}>
-                          复制配对指令
-                        </button>
-                      )}
-                    </div>
-                    <p className="muted">配对状态：{pairingStatus?.status || 'pending'}</p>
-                    <details className="panel subtle">
-                      <summary>查看配对详情</summary>
-                      {pairing.botUsername && <p className="muted">机器人: @{pairing.botUsername}</p>}
-                      {pairing.startCommand && <p className="muted">备用指令：{pairing.startCommand}</p>}
-                      <p className="muted">会话ID: {pairing.pairingSessionId}</p>
-                    </details>
-                  </>
-                )}
-              </div>
-            )}
-
-            {onboardingStep === 4 && (
-              <div className="panel step-panel">
-                <h3>步骤 4：在 Telegram 选择线程</h3>
-                <p className="muted">
-                  请在 Telegram 给机器人发送 <code>/threads</code>，然后直接点会话按钮完成绑定。
-                </p>
-                <div className="actions">
-                  <button onClick={() => void copyText('/threads', '已复制 /threads，可直接粘贴到 Telegram。')}>复制 /threads</button>
-                  {telegramBotLink && (
-                    <a className="link-button" href={telegramBotLink} target="_blank" rel="noreferrer">
-                      打开机器人聊天
-                    </a>
+                  <button onClick={() => void saveRelaySettings()}>{ui.saveApply}</button>
+                  <button onClick={() => void refreshAll()}>{ui.refreshStatus}</button>
+                  {snapshot?.botConfigured && (
+                    <button onClick={() => setShowBotConfigEditor(false)}>{ui.cancel}</button>
                   )}
-                  <button onClick={() => void refreshBasic()}>我已在 Telegram 绑定，刷新状态</button>
                 </div>
-                <p className="muted">当“绑定线程”显示为已绑定后，会自动进入“已完成”。</p>
-              </div>
+              </>
             )}
-          </section>
-        </main>
-      ) : (
-        <main className="grid">
-          <section className="card">
-            <h2>配置完成</h2>
-            <div className="panel step-panel done-panel">
-              <h3>✅ 远程能力已就绪</h3>
-              <p>现在可以直接在 Telegram 给机器人发消息，远程操作当前绑定线程。</p>
-              <div className="actions">
-                <button onClick={() => void refreshBasic()}>刷新状态</button>
-                <button onClick={() => void copyText('/threads', '已复制 /threads，可直接在 Telegram 切换线程。')}>复制 /threads（切换线程）</button>
-                <button onClick={() => void window.desktopApi.clearPairing()}>重新配对手机</button>
-              </div>
-            </div>
-          </section>
-
-          <section className="card">
-            <h2>当前状态</h2>
-            <div className="kv">
-              <div><span>手机连接</span><strong>{status?.relayConnected ? '在线' : '离线'}</strong></div>
-              <div><span>手机消息服务</span><strong>{relayServiceStateText}</strong></div>
-              <div><span>机器人配置</span><strong>{botConfigured ? '已配置' : '未配置'}</strong></div>
-              <div><span>当前机器人</span><strong>{relayHealth?.botUsername ? `@${relayHealth.botUsername}` : '未识别'}</strong></div>
-              <div><span>绑定线程</span><strong>{status?.selectedThreadId || '未绑定'}</strong></div>
-              <div><span>待审批</span><strong>{String(status?.pendingApprovals ?? 0)}</strong></div>
-              <div><span>运行中任务</span><strong>{String(status?.runningTurns ?? 0)}</strong></div>
-              <div><span>错误信息</span><strong>{status?.lastError || '无'}</strong></div>
-            </div>
-            {selectedThread && (
-              <div className="panel subtle">
-                <h3>当前对话线程</h3>
-                <p><strong>{selectedThread.preview || selectedThread.id}</strong></p>
-                <p className="muted">
-                  更新时间：{new Date(selectedThread.updatedAt < 1e11 ? selectedThread.updatedAt * 1000 : selectedThread.updatedAt).toLocaleString()}
-                </p>
-              </div>
-            )}
-            <p className="muted">“手机离线”通常表示尚未配对，或机器人服务未运行。</p>
-            <div className="actions">
-              <button onClick={() => void refreshBasic()}>刷新状态</button>
-              <button onClick={() => void repairLocalRelay()}>修复手机连接</button>
-              <button onClick={() => void refreshRelayServiceState()}>刷新消息服务</button>
-            </div>
-          </section>
-
-          <section className="card">
-            <h2>开机自动在线（可选）</h2>
-            <div className="panel">
-              <p>{serviceStateText}</p>
-              <p className="muted">这是本机后台服务（Agent），用于电脑重启后自动恢复远程能力。</p>
-            </div>
-            <div className="actions">
-              <button onClick={() => void enableAutoStart()}>启用自动在线</button>
-              <button onClick={() => void serviceControl('stop')}>立即停止</button>
-              <button onClick={() => void disableAutoStart()}>关闭自动在线</button>
-              <button onClick={() => void refreshServiceState()}>刷新</button>
-            </div>
-
-            <details className="panel">
-              <summary>高级与排错</summary>
-              <p className="muted">设备 ID: {config?.deviceId || '-'}</p>
-              <p className="muted">本机消息服务: {relayServiceState?.raw || '-'}</p>
-              <div className="actions">
-                <button onClick={() => void window.desktopApi.reconnectRelay()}>重新连接手机消息通道</button>
-                <button onClick={() => void window.desktopApi.clearPairing()}>解绑手机</button>
-              </div>
-              {serviceState && <pre className="code-block">{JSON.stringify(serviceState, null, 2)}</pre>}
-            </details>
           </section>
         </main>
       )}
 
       {showBotGuide && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onClick={() => setShowBotGuide(false)}
-        >
-          <div
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Telegram 机器人配置教学"
-            onClick={(event) => event.stopPropagation()}
-          >
+        <div className="modal-backdrop" role="presentation" onClick={() => setShowBotGuide(false)}>
+          <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h3>如何完成「步骤 2：配置机器人」</h3>
-              <button type="button" onClick={() => setShowBotGuide(false)}>关闭</button>
+              <h3>{ui.botGuideTitle}</h3>
+              <button type="button" onClick={() => setShowBotGuide(false)}>{ui.botGuideClose}</button>
             </div>
-
-            <ol className="guide-list">
-              <li>
-                在 Telegram 搜索并打开 <strong>@BotFather</strong>。
-              </li>
-              <li>
-                发送 <code>/newbot</code>，按提示设置机器人名称和用户名（用户名必须以 <code>bot</code> 结尾）。
-              </li>
-              <li>
-                BotFather 返回一串 <strong>Token</strong>（格式类似 <code>123456:ABC...</code>），复制它。
-              </li>
-              <li>
-                回到本页面，把 Token 粘贴到 <strong>Bot Token（必填）</strong>，然后点 <strong>保存并启用</strong>。
-              </li>
-              <li>
-                看到“机器人已配置”且“手机消息服务运行中”后，继续下一步“手机配对”。
-              </li>
+            <ol>
+              {ui.botGuideSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
             </ol>
-
-            <div className="panel subtle">
-              <p><strong>常见问题</strong></p>
-              <p className="muted">1) 看不到 BotFather：请确认 Telegram 网络正常。</p>
-              <p className="muted">2) 保存失败：检查 Token 是否完整，前后不要有空格。</p>
-              <p className="muted">3) 用户名不确定：可以先不填，系统会自动识别。</p>
-            </div>
-
             <div className="actions">
-              <a className="link-button" href="https://t.me/BotFather" target="_blank" rel="noreferrer">
-                打开 BotFather
-              </a>
-              <button type="button" onClick={() => setShowBotGuide(false)}>我知道了</button>
+              <a className="link-button" href="https://t.me/BotFather" target="_blank" rel="noreferrer">{ui.botGuideOpenFather}</a>
+              <button type="button" onClick={() => setShowBotGuide(false)}>{ui.botGuideDone}</button>
             </div>
           </div>
         </div>

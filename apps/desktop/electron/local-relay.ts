@@ -5,6 +5,7 @@ import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import cors from '@fastify/cors';
 import { z } from 'zod';
+import { localeText, normalizeLocale, type BridgeLocale } from '@codex-bridge/bridge-core';
 
 interface PairingSession {
   id: string;
@@ -615,6 +616,7 @@ export interface LocalRelayStartOptions {
   persistPath: string;
   telegramBotToken?: string;
   relayBotUsername?: string;
+  locale?: BridgeLocale;
 }
 
 export interface LocalRelayHandle {
@@ -622,6 +624,8 @@ export interface LocalRelayHandle {
 }
 
 export async function startLocalRelay(options: LocalRelayStartOptions): Promise<LocalRelayHandle> {
+  const locale = normalizeLocale(options.locale || process.env.BRIDGE_LOCALE);
+  const t = (zh: string, en: string) => localeText(locale, zh, en);
   const relayStore = new RelayStore(options.persistPath);
   const wsByDeviceId = new Map<string, { send: (payload: string) => void; close: () => void }>();
   const typingIntervals = new Map<string, NodeJS.Timeout>();
@@ -798,7 +802,15 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
       relayStore.trackApproval(event.approvalId, deviceId);
       void sendTelegramMessage(
         event.chatId,
-        ['⚠️ 需要审批', `ID: ${event.approvalId}`, event.summary, `可回复 /approve ${event.approvalId} 或 /deny ${event.approvalId}`].join('\n'),
+        [
+          t('⚠️ 需要审批', '⚠️ Approval required'),
+          `ID: ${event.approvalId}`,
+          event.summary,
+          t(
+            `可回复 /approve ${event.approvalId} 或 /deny ${event.approvalId}`,
+            `Reply /approve ${event.approvalId} or /deny ${event.approvalId}`,
+          ),
+        ].join('\n'),
       );
       return;
     }
@@ -807,7 +819,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
       const statusText = (event.text || '').trim();
       if (event.status === 'running') {
         startTypingIndicator(event.chatId, event.messageId);
-        if (!statusText || /^仍在处理中/.test(statusText)) {
+        if (!statusText || /^(仍在处理中|still processing)/i.test(statusText)) {
           return;
         }
         void sendTelegramMessage(event.chatId, `⏳ ${statusText}`);
@@ -830,17 +842,17 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
       }
 
       const failureText = event.text.trim();
-      const isFailure = /^执行失败[:：]?/i.test(failureText) || /app-server stopped/i.test(failureText);
+      const isFailure = /^(执行失败|execution failed)[:：]?/i.test(failureText) || /app-server stopped/i.test(failureText);
       if (isFailure) {
         const needsCodexHint = /network stream disconnected|runtime unresponsive|app-server stopped|app-server exited/i.test(failureText);
         const decoratedFailure = needsCodexHint
-          ? `${failureText}\n\n建议：请确认 Codex App 已打开且在线，然后重试。`
+          ? `${failureText}\n\n${t('建议：请确认 Codex App 已打开且在线，然后重试。', 'Tip: make sure Codex App is open and online, then retry.')}`
           : failureText;
         void sendTelegramMessage(event.chatId, `❌ ${decoratedFailure}`, {
           replyMarkup: buildMainReplyKeyboard(),
         });
       } else {
-        void sendTelegramMessage(event.chatId, `✅ 已完成\n\n${event.text}`, {
+        void sendTelegramMessage(event.chatId, `${t('✅ 已完成', '✅ Completed')}\n\n${event.text}`, {
           replyMarkup: buildMainReplyKeyboard(),
         });
       }
@@ -936,7 +948,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
         telegramChatId: body.data.telegramChatId,
       });
 
-      await sendTelegramMessage(body.data.telegramChatId, '✅ 配对成功，设备已绑定。');
+      await sendTelegramMessage(body.data.telegramChatId, t('✅ 配对成功，设备已绑定。', '✅ Pairing successful, device is now bound.'));
 
       return {
         pairingSessionId: session.id,
@@ -1130,7 +1142,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
               'Failed to fetch Telegram photo',
             );
             if (!text) {
-              await telegramBot!.sendMessage(msg.chatId, '❌ 图片下载失败，请稍后重试。');
+              await telegramBot!.sendMessage(msg.chatId, t('❌ 图片下载失败，请稍后重试。', '❌ Failed to download image. Please try again.'));
               return;
             }
           }
@@ -1152,7 +1164,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
           const token = text.replace('/start ', '').trim();
           const [, pairingSessionId, code] = token.match(/^pair_([^_]+)_(\d{6})$/) || [];
           if (!pairingSessionId || !code) {
-            await telegramBot!.sendMessage(msg.chatId, '配对链接无效。请回到桌面端重新生成二维码。');
+            await telegramBot!.sendMessage(msg.chatId, t('配对链接无效。请回到桌面端重新生成二维码。', 'Invalid pairing link. Please regenerate QR code from desktop app.'));
             return;
           }
 
@@ -1163,9 +1175,9 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
               telegramUserId: msg.fromUserId,
               telegramChatId: msg.chatId,
             });
-            await telegramBot!.sendMessage(msg.chatId, '✅ 配对成功，现在可以直接发消息远程操作 Codex。');
+            await telegramBot!.sendMessage(msg.chatId, t('✅ 配对成功，现在可以直接发消息远程操作 Codex。', '✅ Pairing successful. You can now send messages to control Codex remotely.'));
           } catch (error: any) {
-            await telegramBot!.sendMessage(msg.chatId, `❌ 配对失败：${error?.message || String(error)}`);
+            await telegramBot!.sendMessage(msg.chatId, `${t('❌ 配对失败：', '❌ Pairing failed: ')}${error?.message || String(error)}`);
           }
           return;
         }
@@ -1175,7 +1187,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
           if (!existingBinding) {
             await telegramBot!.sendMessage(
               msg.chatId,
-              '请在桌面端点击“开始配对”，然后扫码或发送配对指令。',
+              t('请在桌面端点击“开始配对”，然后扫码或发送配对指令。', 'Please click \"Start pairing\" in desktop app, then scan QR or send pairing command.'),
               { replyMarkup: buildMainReplyKeyboard() },
             );
             return;
@@ -1190,7 +1202,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
             createdAt: Date.now(),
           });
           if (!sent) {
-            await telegramBot!.sendMessage(msg.chatId, '设备当前离线，请确认桌面端已打开。', {
+            await telegramBot!.sendMessage(msg.chatId, t('设备当前离线，请确认桌面端已打开。', 'Device is offline. Please make sure desktop app is open.'), {
               replyMarkup: buildMainReplyKeyboard(),
             });
           }
@@ -1201,13 +1213,13 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
           const allow = text.startsWith('/approve ');
           const approvalId = text.split(/\s+/)[1] || '';
           if (!approvalId) {
-            await telegramBot!.sendMessage(msg.chatId, '用法：/approve <approvalId> 或 /deny <approvalId>');
+            await telegramBot!.sendMessage(msg.chatId, t('用法：/approve <approvalId> 或 /deny <approvalId>', 'Usage: /approve <approvalId> or /deny <approvalId>'));
             return;
           }
 
           const deviceId = relayStore.getApprovalDevice(approvalId);
           if (!deviceId) {
-            await telegramBot!.sendMessage(msg.chatId, `未找到审批单：${approvalId}`);
+            await telegramBot!.sendMessage(msg.chatId, `${t('未找到审批单：', 'Approval not found: ')}${approvalId}`);
             return;
           }
 
@@ -1218,7 +1230,12 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
             createdAt: Date.now(),
           });
 
-          await telegramBot!.sendMessage(msg.chatId, sent ? `已提交审批：${approvalId}` : `设备离线，审批提交失败：${approvalId}`);
+          await telegramBot!.sendMessage(
+            msg.chatId,
+            sent
+              ? `${t('已提交审批：', 'Approval submitted: ')}${approvalId}`
+              : `${t('设备离线，审批提交失败：', 'Device offline, failed to submit approval: ')}${approvalId}`,
+          );
           return;
         }
 
@@ -1228,7 +1245,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
 
         const binding = relayStore.getBindingByChat(msg.chatId);
         if (!binding) {
-          await telegramBot!.sendMessage(msg.chatId, '当前未绑定设备，请先在桌面端点击“开始配对”并扫码。', {
+          await telegramBot!.sendMessage(msg.chatId, t('当前未绑定设备，请先在桌面端点击“开始配对”并扫码。', 'No device is bound yet. Please click \"Start pairing\" in desktop app and scan QR.'), {
             replyMarkup: buildMainReplyKeyboard(),
           });
           return;
@@ -1245,7 +1262,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
             createdAt: Date.now(),
           });
           if (!sent) {
-            await telegramBot!.sendMessage(msg.chatId, '设备当前离线，请确认桌面端已打开。', {
+            await telegramBot!.sendMessage(msg.chatId, t('设备当前离线，请确认桌面端已打开。', 'Device is offline. Please make sure desktop app is open.'), {
               replyMarkup: buildMainReplyKeyboard(),
             });
           }
@@ -1262,7 +1279,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
         });
 
         if (!sent) {
-          await telegramBot!.sendMessage(msg.chatId, '设备当前离线，请确认桌面端已打开。', {
+          await telegramBot!.sendMessage(msg.chatId, t('设备当前离线，请确认桌面端已打开。', 'Device is offline. Please make sure desktop app is open.'), {
             replyMarkup: buildMainReplyKeyboard(),
           });
         }
@@ -1287,12 +1304,12 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
           const allow = data.startsWith('approve:');
           const approvalId = data.slice(data.indexOf(':') + 1).trim();
           if (!approvalId) {
-            await telegramBot!.answerCallbackQuery(query.id, '审批单无效');
+            await telegramBot!.answerCallbackQuery(query.id, t('审批单无效', 'Invalid approval id'));
             return;
           }
           const deviceId = relayStore.getApprovalDevice(approvalId);
           if (!deviceId) {
-            await telegramBot!.answerCallbackQuery(query.id, '审批单不存在');
+            await telegramBot!.answerCallbackQuery(query.id, t('审批单不存在', 'Approval not found'));
             return;
           }
           const sent = sendToDevice(deviceId, {
@@ -1301,23 +1318,23 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
             allow,
             createdAt: Date.now(),
           });
-          await telegramBot!.answerCallbackQuery(query.id, sent ? '已提交' : '设备离线');
+          await telegramBot!.answerCallbackQuery(query.id, sent ? t('已提交', 'Submitted') : t('设备离线', 'Device offline'));
           return;
         }
 
         const binding = relayStore.getBindingByChat(query.chatId);
         if (!binding) {
-          await telegramBot!.answerCallbackQuery(query.id, '当前未绑定设备');
+          await telegramBot!.answerCallbackQuery(query.id, t('当前未绑定设备', 'No device bound'));
           return;
         }
 
         const mapped = parseCallbackCommand(data);
         if (!mapped) {
-          await telegramBot!.answerCallbackQuery(query.id, '暂不支持该按钮');
+          await telegramBot!.answerCallbackQuery(query.id, t('暂不支持该按钮', 'Unsupported button'));
           return;
         }
 
-        await telegramBot!.answerCallbackQuery(query.id, '处理中…');
+        await telegramBot!.answerCallbackQuery(query.id, t('处理中…', 'Processing...'));
         const sent = sendToDevice(binding.deviceId, {
           type: 'incomingControlCommand',
           chatId: query.chatId,
@@ -1328,7 +1345,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
           createdAt: Date.now(),
         });
         if (!sent) {
-          await telegramBot!.sendMessage(query.chatId, '设备当前离线，请确认桌面端已打开。', {
+          await telegramBot!.sendMessage(query.chatId, t('设备当前离线，请确认桌面端已打开。', 'Device is offline. Please make sure desktop app is open.'), {
             replyMarkup: buildMainReplyKeyboard(),
           });
         }
@@ -1337,15 +1354,15 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
 
     try {
       await telegramBot.setMyCommands([
-        { command: 'threads', description: '查看最近会话并快速绑定' },
-        { command: 'bind', description: '绑定会话（/bind latest 或 /bind <id>）' },
-        { command: 'current', description: '查看当前会话快照' },
-        { command: 'active', description: '查看当前会话标题' },
-        { command: 'detail', description: '查看会话详情（来源/ID/CWD）' },
-        { command: 'status', description: '查看连接与运行状态' },
-        { command: 'cancel', description: '终止当前任务并清空排队' },
-        { command: 'unbind', description: '解绑当前会话' },
-        { command: 'help', description: '显示菜单与按钮' },
+        { command: 'threads', description: t('查看最近会话并快速绑定', 'List recent threads and bind quickly') },
+        { command: 'bind', description: t('绑定会话（/bind latest 或 /bind <id>）', 'Bind a thread (/bind latest or /bind <id>)') },
+        { command: 'current', description: t('查看当前会话快照', 'Show current thread snapshot') },
+        { command: 'active', description: t('查看当前会话标题', 'Show active thread title') },
+        { command: 'detail', description: t('查看会话详情（来源/ID/CWD）', 'Show thread details (source/ID/CWD)') },
+        { command: 'status', description: t('查看连接与运行状态', 'Show runtime and connection status') },
+        { command: 'cancel', description: t('终止当前任务并清空排队', 'Cancel current task and clear queue') },
+        { command: 'unbind', description: t('解绑当前会话', 'Unbind current thread') },
+        { command: 'help', description: t('显示菜单与按钮', 'Show menu and buttons') },
       ]);
     } catch (error: any) {
       app.log.warn({ err: error }, 'Failed to set Telegram bot commands');

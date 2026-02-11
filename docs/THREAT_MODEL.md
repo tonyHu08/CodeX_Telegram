@@ -1,29 +1,41 @@
-# Threat Model (v0)
+# Threat Model / 威胁模型
 
-## 资产
+## English
+### Assets
+- `deviceAccessToken`
+- Telegram session control
+- Local Codex execution privileges
 
-- 设备访问令牌 `deviceAccessToken`
-- 用户 Telegram 会话控制权
+### Risks
+1. Token leakage
+2. Lost/stolen device
+3. Message replay
+4. Approval hijack
+5. Relay outage
+
+### Mitigations
+- Keychain storage
+- Re-pair and revoke flows
+- Idempotency keys and dedup
+- Approval scope validation
+- Auto-reconnect and status reporting
+
+## 中文
+### 资产
+- `deviceAccessToken`
+- Telegram 会话控制权
 - 本地 Codex 执行权限
 
-## 主要风险
-
-1. Token 泄露
-   - 影响：攻击者可伪造设备连接
-   - 缓解：Keychain 存储、短周期轮换、服务端撤销机制（待补）
-
+### 风险
+1. token 泄露
 2. 设备丢失/被盗
-   - 影响：本地可继续接收远程任务
-   - 缓解：远程解绑、重新配对、强制审批
-
 3. 消息重放
-   - 影响：重复执行历史消息
-   - 缓解：messageId 幂等、服务端去重（待补）
-
 4. 审批劫持
-   - 影响：恶意批准命令或文件修改
-   - 缓解：审批 ID 绑定设备、超时失效、审计日志
+5. relay 中断
 
-5. Relay 中断
-   - 影响：远程不可用
-   - 缓解：自动重连、状态回报、本地任务不丢（待完善）
+### 缓解
+- Keychain 存储
+- 重配对与撤销机制
+- 幂等与去重
+- 审批范围校验
+- 自动重连与状态回报

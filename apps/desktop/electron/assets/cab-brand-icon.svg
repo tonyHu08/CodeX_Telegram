@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Codex Bridge CAB icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a1326"/>
+      <stop offset="100%" stop-color="#142544"/>
+    </linearGradient>
+    <linearGradient id="beamA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2f6a95" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#2f6a95" stop-opacity="0.02"/>
+    </linearGradient>
+    <linearGradient id="beamB" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2f6a95" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#2f6a95" stop-opacity="0.02"/>
+    </linearGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect x="24" y="24" width="976" height="976" rx="188" fill="url(#bg)"/>
+  <rect x="24" y="24" width="976" height="976" rx="188" fill="url(#grid)"/>
+
+  <path d="M60 770L988 220L952 160L24 710Z" fill="url(#beamA)"/>
+  <path d="M36 220L964 772L1000 712L72 160Z" fill="url(#beamB)"/>
+
+  <rect x="232" y="254" width="560" height="16" rx="8" fill="#2cd8ff"/>
+  <rect x="232" y="708" width="560" height="16" rx="8" fill="#2cd8ff"/>
+
+  <text x="512" y="552" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Arial, sans-serif" font-size="240" font-weight="800" fill="#e9eff6">CB</text>
+  <text x="512" y="840" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Arial, sans-serif" font-size="68" font-weight="600" fill="#d8e3f0">Codex Bridge</text>
+</svg>
