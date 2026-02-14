@@ -1,82 +1,101 @@
 # Codex Bridge Desktop
 
-[English](#english) | [中文](#中文)
+[中文](#中文) | [English](#english)
 
-## 中文
+## English
 
-把 Codex 从“只能坐在电脑前用”，变成“手机 Telegram 随时远程用”。
+Remote-control your local Codex from Telegram, as if you never left your desk.
 
-### 这个项目解决什么痛点
-- 你离开电脑后，Codex 对话无法继续跟进。
-- 你在手机上只能看消息，不能像在 Codex 里那样继续驱动任务。
-- 需要远程审批、查看状态、切换线程时，缺少统一入口。
+Codex Bridge Desktop turns Codex into a mobile-operable workflow: send tasks from your phone, bind to the exact thread you care about, review approvals, and get final responses back in Telegram.
 
-Codex Bridge Desktop 的目标是：**让你用 Telegram 像远程控制台一样操作本机 Codex**，并尽量保持与 Codex 线程一致。
+![Codex Bridge Icon](./apps/desktop/electron/assets/cab-brand-icon.png)
 
-### 你现在可以做到什么
-- 在 Telegram 中发送文本/图片，转给已绑定的 Codex thread 执行。
-- 在 Telegram 中查看最近线程、绑定线程、查看当前对话快照。
-- 在 Telegram 中处理审批（`/approve` / `/deny`）。
-- 查询 Codex 用量（`/usage` 或 `/limits`）。
-- 使用 macOS 菜单栏快速查看状态、启停远程能力。
-- 使用桌面 App 完成首次引导、机器人配置、日志排查。
+### Why this exists
 
-## 2-3 分钟上手（普通用户）
+Codex is great on desktop, but real work does not stop when you step away.
 
-### 1) 下载并打开 App
-1. 打开 Releases 页面下载最新版：  
-   `https://github.com/tonyHu08/CodeX_Bridge/releases`
-2. 安装并打开 `Codex Bridge Desktop`。
-3. 保证本机已安装并登录 Codex App。
+This project solves exactly that:
+- Continue Codex conversations from your phone.
+- Keep thread-level control (`/threads`, `/bind`, `/current`) instead of a generic chat relay.
+- Handle approvals remotely (`/approve`, `/deny`) with clear visibility.
+- Check Codex usage quickly (`/usage`, `/limits`).
 
-### 2) 配置 Telegram 机器人
-1. 在 Telegram 打开 `@BotFather`。
-2. 用 `/newbot` 创建机器人，拿到 Bot Token。
-3. 在桌面 App 中粘贴 Token，保存并启用。
+### What you can do today
 
-### 3) 手机配对
-1. 在桌面 App 点击“开始配对”。
-2. 用 Telegram 打开配对链接（或扫码）。
-3. 配对成功后，机器人会回复已绑定。
+- Bind Telegram to a specific Codex thread and run remote turns.
+- Send text and image inputs from Telegram.
+- See command/status/final response in the same Telegram chat.
+- Use macOS menu bar for quick state and remote on/off.
+- Run bilingual experience (English + Chinese) across desktop + Telegram responses.
 
-### 4) 绑定要操作的 Codex 会话
-1. 在 Telegram 里发送 `/threads`。
-2. 选择线程按钮，或用 `/bind <编号>`、`/bind latest`。
-3. 之后直接发消息即可远程驱动该线程。
+### Experience flow
 
-### 5) 日常使用
-- 直接发送文本任务（可附图）。
-- 随时用 `/status`、`/current`、`/usage` 查看状态。
-- 需要停止当前任务时用 `/cancel`。
+```mermaid
+flowchart LR
+    A["Install Desktop App"] --> B["Paste Telegram Bot Token"]
+    B --> C["Pair Phone (QR / deep link)"]
+    C --> D["Send /threads in Telegram"]
+    D --> E["Bind thread (/bind latest or index)"]
+    E --> F["Send tasks remotely"]
+    F --> G["Receive status + final response"]
+```
 
-## 常用 Telegram 命令
-- `/threads`：查看最近线程并快速绑定
-- `/bind latest`：绑定最新线程
-- `/bind <index|threadId>`：绑定指定线程
-- `/current`：查看当前绑定线程快照
-- `/detail <index|threadId>`：查看线程详细信息
-- `/usage` / `/limits`：查询 Codex 用量
-- `/status`：查看桥接状态
-- `/cancel`：终止当前运行并清空排队
-- `/unbind`：解绑当前线程
-- `/help`：帮助
+### Architecture (high level)
 
-## 技术实现（面向开发者）
+```mermaid
+flowchart TB
+    TG["Telegram User"] --> BOT["Telegram Bot"]
+    BOT --> RELAY["Local Relay (127.0.0.1)"]
+    RELAY --> AGENT["Bridge Agent"]
+    AGENT --> APP["Codex App Server (JSON-RPC)"]
+    APP --> THREAD["Bound Codex Thread"]
+    THREAD --> APP --> AGENT --> RELAY --> BOT --> TG
+```
 
-### Monorepo 结构
-- `apps/desktop`: Electron + React 桌面端（引导、主页、菜单栏）
-- `packages/bridge-core`: 线程编排、审批、状态管理、Codex App Server 客户端
-- `services/cloud-relay`: Relay 服务（可选，自托管场景）
-- `src` (legacy): 历史实现
+---
 
-### 核心机制
-- 使用 `codex app-server`（JSON-RPC）控制本机 thread：
-  - `thread/list`、`thread/read`、`thread/resume`、`turn/start`
-- Telegram 侧做消息接入、命令路由、审批回传。
-- SQLite 持久化绑定、去重和审批状态。
-- macOS 菜单栏常驻，桌面窗口用于配置与诊断。
+## Quick Start (2-3 minutes)
 
-### 本地开发
+### 1. Download and open
+1. Download latest build from [Releases](https://github.com/tonyHu08/CodeX_Bridge/releases).
+2. Open `Codex Bridge Desktop`.
+3. Make sure Codex App is installed and logged in on this Mac.
+
+### 2. Create your Telegram bot
+1. Open `@BotFather` in Telegram.
+2. Run `/newbot`.
+3. Copy the Bot Token.
+
+### 3. Pair desktop with phone
+1. Paste Token in the desktop app and save.
+2. Click pairing.
+3. Open pairing link (or scan QR) in Telegram.
+
+### 4. Bind a Codex thread
+1. Send `/threads` in Telegram.
+2. Pick one thread button or run `/bind latest`.
+3. Send normal text to start remote execution.
+
+### 5. Daily commands
+- `/threads`
+- `/bind latest`
+- `/current`
+- `/status`
+- `/usage` (alias: `/limits`)
+- `/cancel`
+- `/unbind`
+
+---
+
+## Developer Guide
+
+### Monorepo layout
+- `apps/desktop`: Electron + React desktop app (onboarding + app home + menu bar).
+- `packages/bridge-core`: orchestration, Codex client, approvals, persistence.
+- `services/cloud-relay`: optional self-hosted relay.
+- `src` (legacy): earlier implementation kept for compatibility.
+
+### Local development
 ```bash
 cd /path/to/codex-remote-bridge
 npm install
@@ -86,21 +105,21 @@ npm run build:desktop
 npm run start:desktop
 ```
 
-### 构建校验
+### Quality checks
 ```bash
 npm run typecheck
 npm run build
 ```
 
-### 关键环境变量
-- `HOST`（默认 `127.0.0.1`）
-- `PORT`（默认 `8787`）
-- `RELAY_PUBLIC_BASE_URL`（默认 `http://127.0.0.1:8787`）
+### Environment variables
+- `HOST` (default `127.0.0.1`)
+- `PORT` (default `8787`)
+- `RELAY_PUBLIC_BASE_URL` (default `http://127.0.0.1:8787`)
 - `RELAY_BOT_USERNAME`
 - `TELEGRAM_BOT_TOKEN`
-- `BRIDGE_LOCALE`（`zh` 或 `en`）
+- `BRIDGE_LOCALE` (`en` or `zh`)
 
-### 文档
+### More docs
 - [Configuration](./docs/CONFIG.md)
 - [Commands](./docs/COMMANDS.md)
 - [Architecture](./docs/ARCHITECTURE.md)
@@ -112,39 +131,39 @@ npm run build
 
 ---
 
-## English
+## 中文
 
-Turn Codex from a desktop-only experience into a Telegram-based remote workflow.
+用 Telegram 远程操控本机 Codex，让你离开电脑也能持续推进对话和任务。
 
-### What this project solves
-- You cannot continue Codex tasks when you are away from your computer.
-- You need a mobile control surface for thread operations, status, and approvals.
-- You want a practical remote bridge without changing your existing Codex workflow.
+### 这个项目能解决什么问题
+- 人不在电脑前，Codex 对话就中断。
+- 手机端缺少 thread 级别控制（不仅仅是“转发消息”）。
+- 远程审批、查看状态、查看用量缺少统一入口。
 
-Codex Bridge Desktop lets you control local Codex threads from Telegram, with thread binding, status, approvals, and usage visibility.
+Codex Bridge Desktop 提供“桌面 + Telegram”一体化远程体验：  
+线程可绑定、状态可追踪、审批可确认、结果可回包。
 
-### What you can do
-- Send text/image messages from Telegram to a bound Codex thread.
-- List and bind recent threads from Telegram.
-- Handle approvals remotely (`/approve`, `/deny`).
-- Check Codex rate limits (`/usage`, `/limits`).
-- Use macOS tray/menu bar for quick status and remote on/off.
+### 已支持能力
+- Telegram 文本/图片输入转发到绑定 thread。
+- `/threads` 查看最近线程并绑定。
+- `/approve` `/deny` 远程审批。
+- `/usage` `/limits` 查询用量。
+- 菜单栏快速查看在线状态与远程开关。
+- 桌面端与 Telegram 均支持中英文。
 
-### Quick start (2-3 minutes)
-1. Download the desktop app from Releases:  
-   `https://github.com/tonyHu08/CodeX_Bridge/releases`
-2. Open the app and complete the onboarding wizard.
-3. Create a Telegram bot via `@BotFather` and paste the Bot Token.
-4. Start pairing in the app, then open the pairing link in Telegram.
-5. In Telegram, run `/threads` and bind a thread.
-6. Send your message to start remote Codex execution.
+### 快速上手
+1. 在 [Releases](https://github.com/tonyHu08/CodeX_Bridge/releases) 下载桌面端并打开。  
+2. 在 `@BotFather` 创建机器人并拿到 Token。  
+3. 在桌面端保存 Token 并完成配对。  
+4. Telegram 发送 `/threads` 后绑定线程。  
+5. 直接发送消息开始远程操作。
 
-### Development quick start
-```bash
-cd /path/to/codex-remote-bridge
-npm install
-npm run setup
-npm run dev:relay
-npm run build:desktop
-npm run start:desktop
-```
+### 常用命令
+- `/threads`：列出最近线程
+- `/bind latest`：绑定最新线程
+- `/bind <编号|threadId>`：绑定指定线程
+- `/current`：查看当前 thread 快照
+- `/status`：查看当前状态
+- `/usage`：查看 Codex 用量
+- `/cancel`：终止当前任务
+- `/unbind`：解绑线程

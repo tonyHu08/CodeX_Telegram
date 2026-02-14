@@ -1008,7 +1008,7 @@ export class BridgeAgent extends EventEmitter {
       return 'idle';
     }
     if (!Array.isArray(snapshot.recentTurns) || snapshot.recentTurns.length === 0) {
-      return 'unknown';
+      return snapshot.updatedAt > 0 ? 'idle' : 'unknown';
     }
     const statuses = snapshot.recentTurns
       .slice(-3)
