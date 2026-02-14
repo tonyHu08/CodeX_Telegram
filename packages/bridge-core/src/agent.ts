@@ -54,7 +54,6 @@ const DEVICE_BINDING_PREFIX = 'device:';
 const THREAD_CACHE_TTL_MS = 10 * 60 * 1000;
 const THREAD_LIST_LIMIT = 20;
 const THREAD_STATUS_PROBE_LIMIT = 10;
-const THREAD_STATUS_PROBE_TIMEOUT_MS = 6_000;
 const THREAD_STATUS_PROBE_BATCH_SIZE = 4;
 const GLOBAL_STATE_CACHE_TTL_MS = 15_000;
 const CODEX_GLOBAL_STATE_PATH = process.env.CODEX_GLOBAL_STATE_PATH
@@ -1001,7 +1000,14 @@ export class BridgeAgent extends EventEmitter {
   }
 
   private inferThreadTaskStateFromSnapshot(snapshot: ThreadConversationSnapshot | null): ThreadTaskState {
-    if (!snapshot || !Array.isArray(snapshot.recentTurns) || snapshot.recentTurns.length === 0) {
+    if (!snapshot) {
+      return 'unknown';
+    }
+    if (snapshot.degraded) {
+      // includeTurns timeout fallback: we can at least mark it as not-running.
+      return 'idle';
+    }
+    if (!Array.isArray(snapshot.recentTurns) || snapshot.recentTurns.length === 0) {
       return 'unknown';
     }
     const statuses = snapshot.recentTurns
@@ -1044,11 +1050,7 @@ export class BridgeAgent extends EventEmitter {
       const batch = toProbe.slice(i, i + THREAD_STATUS_PROBE_BATCH_SIZE);
       const settled = await Promise.allSettled(
         batch.map(async (thread) => {
-          const snapshot = await withTimeout(
-            this.fetchThreadConversationSnapshot(thread.id),
-            THREAD_STATUS_PROBE_TIMEOUT_MS,
-            `thread-status-probe:${thread.id}`,
-          );
+          const snapshot = await this.fetchThreadConversationSnapshot(thread.id);
           return { threadId: thread.id, taskState: this.inferThreadTaskStateFromSnapshot(snapshot) };
         }),
       );
