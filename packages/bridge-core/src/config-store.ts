@@ -14,9 +14,10 @@ export function defaultConfigPath(): string {
 }
 
 export function createDefaultDesktopConfig(partial?: Partial<DesktopConfig>): DesktopConfig {
+  const relayDefault = process.env.CB_DEFAULT_RELAY_BASE_URL || 'http://127.0.0.1:8787';
   return {
     deviceId: partial?.deviceId || randomUUID(),
-    relayBaseUrl: partial?.relayBaseUrl || 'http://127.0.0.1:8787',
+    relayBaseUrl: partial?.relayBaseUrl || relayDefault,
     selectedThreadId: partial?.selectedThreadId ?? null,
     autoStartAgent: partial?.autoStartAgent ?? true,
     logLevel: partial?.logLevel || 'info',

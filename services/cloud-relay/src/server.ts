@@ -5,7 +5,7 @@ import cors from '@fastify/cors';
 import { z } from 'zod';
 import { RelayStore } from './store';
 import { TelegramBotClient } from './telegram';
-import type { ApprovalDecisionEvent, DeviceOutboundEvent, IncomingUserMessageEvent } from './types';
+import type { AnalyticsEvent, ApprovalDecisionEvent, DeviceOutboundEvent, IncomingUserMessageEvent } from './types';
 
 const relayStore = new RelayStore();
 const wsByDeviceId = new Map<string, { send: (payload: string) => void; close: () => void }>();
@@ -85,11 +85,39 @@ async function setupRoutes() {
   await app.register(websocket);
 
   app.get('/healthz', async () => {
+    const analytics = relayStore.getAnalyticsSummary();
     return {
       ok: true,
       relayBaseUrl,
       websocketClients: wsByDeviceId.size,
       telegramEnabled: !!telegramBot,
+      analyticsEvents: analytics.total,
+    };
+  });
+
+  app.post('/v1/devices/register', async (request, reply) => {
+    const body = z.object({
+      deviceId: z.string().uuid().optional(),
+      deviceFingerprint: z.string().min(8),
+      appVersion: z.string().min(1),
+      platform: z.string().min(1),
+    }).safeParse(request.body || {});
+
+    if (!body.success) {
+      return reply.status(400).send({ error: body.error.message });
+    }
+
+    const registered = relayStore.registerDevice({
+      deviceId: body.data.deviceId,
+      deviceFingerprint: body.data.deviceFingerprint,
+      appVersion: body.data.appVersion,
+      platform: body.data.platform,
+    });
+
+    return {
+      deviceId: registered.deviceId,
+      deviceToken: registered.deviceToken,
+      createdAt: registered.createdAt,
     };
   });
 
@@ -198,6 +226,44 @@ async function setupRoutes() {
       telegramUserId: binding.telegramUserId,
       telegramChatId: binding.telegramChatId,
       connected: wsByDeviceId.has(binding.deviceId),
+    };
+  });
+
+  app.post('/v1/analytics/events', async (request, reply) => {
+    const body = z.object({
+      eventId: z.string().min(8),
+      name: z.string().min(1),
+      timestamp: z.number().int().positive(),
+      appVersion: z.string().min(1),
+      locale: z.string().min(2),
+      channelTag: z.string().min(1),
+      deviceIdHash: z.string().min(8),
+      payload: z.record(z.unknown()).optional(),
+    }).safeParse(request.body || {});
+
+    if (!body.success) {
+      return reply.status(400).send({ error: body.error.message });
+    }
+
+    const event: AnalyticsEvent = {
+      eventId: body.data.eventId,
+      name: body.data.name,
+      timestamp: body.data.timestamp,
+      appVersion: body.data.appVersion,
+      locale: body.data.locale,
+      channelTag: body.data.channelTag,
+      deviceIdHash: body.data.deviceIdHash,
+      payload: body.data.payload,
+    };
+    relayStore.pushAnalyticsEvent(event);
+
+    return { ok: true };
+  });
+
+  app.get('/v1/analytics/summary', async () => {
+    return {
+      ok: true,
+      ...relayStore.getAnalyticsSummary(),
     };
   });
 

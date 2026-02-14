@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
 import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, shell } from 'electron';
 import WebSocket from 'ws';
 import keytar from 'keytar';
@@ -25,11 +26,17 @@ const KEYCHAIN_ACCOUNT = 'device-access-token';
 const AGENT_LABEL = 'com.codex-bridge.agent';
 const RELAY_LABEL = 'com.codex-bridge.relay';
 const LOCAL_RELAY_BASE_URL = 'http://127.0.0.1:8787';
+const OFFICIAL_RELAY_BASE_URL = (process.env.CB_OFFICIAL_RELAY_BASE_URL || 'https://relay.codexbridge.app').trim();
+const OFFICIAL_BOT_USERNAME = (process.env.CB_OFFICIAL_BOT_USERNAME || 'codexbridge_official_bot').trim().replace(/^@+/, '');
 const LOCAL_RELAY_STORE_PATH = path.join(dataRoot(), 'data', 'local-relay-store.json');
 const RELAY_CONFIG_PATH = path.join(dataRoot(), 'relay-config.json');
 const LOCAL_RELAY_HOST = '127.0.0.1';
 const LOCAL_RELAY_PORT = 8787;
 const FEEDBACK_ISSUES_URL = process.env.CB_FEEDBACK_ISSUES_URL || 'https://github.com/tonyHu08/CodeX_Bridge/issues';
+
+if (!process.env.CB_DEFAULT_RELAY_BASE_URL && app.isPackaged) {
+  process.env.CB_DEFAULT_RELAY_BASE_URL = OFFICIAL_RELAY_BASE_URL;
+}
 
 type RelaySettings = {
   telegramBotToken: string;
@@ -43,6 +50,7 @@ type RemoteState = 'online' | 'partial' | 'offline';
 type AppSnapshot = {
   healthOk: boolean;
   botConfigured: boolean;
+  usingHostedRelay: boolean;
   relayRunning: boolean;
   relayConnected: boolean;
   paired: boolean;
@@ -65,6 +73,7 @@ type AppSnapshot = {
     cwd: string | null;
   } | null;
   botUsername: string | null;
+  officialBotUsername: string | null;
   lastError: string | null;
 };
 
@@ -408,6 +417,7 @@ class DesktopRuntime {
   private readonly relayLaunchdManager: LaunchdServiceManager;
   private readonly relay: RelayConnection;
   private relayManagedByApp = false;
+  private remoteEnabled = true;
   private inMemoryDeviceToken: string | null = null;
   private lastHealthReport: HealthReport | null = null;
   private appSnapshotCache: { value: AppSnapshot; expiresAt: number } | null = null;
@@ -831,12 +841,33 @@ class DesktopRuntime {
   }
 
   setRelayBaseUrl(relayBaseUrl: string) {
+    const wasLocal = this.shouldManageRelayLifecycle();
     const cfg = this.configStore.load();
     const normalized = normalizeRelayBaseUrl(relayBaseUrl, cfg.locale);
     this.configStore.update((current) => ({ ...current, relayBaseUrl: normalized }));
+    const nowLocal = this.shouldManageRelayLifecycle();
+    if (wasLocal && !nowLocal) {
+      this.stopManagedLocalRelayIfNeeded();
+    } else if (!wasLocal && nowLocal) {
+      this.startManagedLocalRelayIfNeeded();
+    }
+    this.remoteEnabled = true;
+    void this.relay.reconnectNow().catch(() => undefined);
     this.relayHealthCache = null;
     this.invalidateCaches();
     return this.configStore.load();
+  }
+
+  useOfficialHostedRelay() {
+    const cfg = this.configStore.load();
+    if (!OFFICIAL_RELAY_BASE_URL) {
+      throw new Error(withLocale(cfg.locale, '未配置官方托管地址（CB_OFFICIAL_RELAY_BASE_URL）。', 'Official hosted relay URL is not configured (CB_OFFICIAL_RELAY_BASE_URL).'));
+    }
+    return this.setRelayBaseUrl(OFFICIAL_RELAY_BASE_URL);
+  }
+
+  useLocalSelfHostedRelay() {
+    return this.setRelayBaseUrl(LOCAL_RELAY_BASE_URL);
   }
 
   private isNetworkFetchError(error: unknown): boolean {
@@ -998,8 +1029,11 @@ class DesktopRuntime {
     const status = await this.getCurrentStatus();
     const relaySettings = this.getRelaySettings();
     const relayService = this.relayServiceStatus();
+    const cfg = this.configStore.load();
+    const usingHostedRelay = !isLocalRelayUrl(cfg.relayBaseUrl);
     const healthOk = this.lastHealthReport?.ok ?? false;
-    const botConfigured = relaySettings.telegramBotToken.trim().length > 0;
+    const botConfigured = usingHostedRelay || relaySettings.telegramBotToken.trim().length > 0;
+    const relayRunning = usingHostedRelay ? this.remoteEnabled : relayService.running;
     const paired = Boolean(status.relayConnected) || Boolean(status.hasDeviceToken);
     const threadBound = Boolean(status.selectedThreadId);
     this.maybeRefreshRelayHealth();
@@ -1024,7 +1058,7 @@ class DesktopRuntime {
     const remoteState = this.computeRemoteState({
       healthOk,
       botConfigured,
-      relayRunning: relayService.running,
+      relayRunning,
       paired,
       relayConnected: status.relayConnected,
     });
@@ -1032,13 +1066,14 @@ class DesktopRuntime {
     const snapshot: AppSnapshot = {
       healthOk,
       botConfigured,
-      relayRunning: relayService.running,
+      usingHostedRelay,
+      relayRunning,
       relayConnected: status.relayConnected,
       paired,
       threadBound,
       statusChecks: {
         codexReady: healthOk,
-        remoteServiceRunning: relayService.running,
+        remoteServiceRunning: relayRunning,
         phonePaired: paired,
         threadBound,
       },
@@ -1049,10 +1084,11 @@ class DesktopRuntime {
         threadBound,
       }),
       remoteState,
-      locale: this.configStore.load().locale,
+      locale: cfg.locale,
       selectedThreadId: status.selectedThreadId,
       currentThread,
       botUsername: relayHealth?.botUsername || null,
+      officialBotUsername: usingHostedRelay ? OFFICIAL_BOT_USERNAME : null,
       lastError: status.lastError,
     };
     this.appSnapshotCache = {
@@ -1145,7 +1181,18 @@ class DesktopRuntime {
 
   async toggleRelay(shouldRun: boolean): Promise<ServiceStatus> {
     if (!this.shouldManageRelayLifecycle()) {
-      return this.relayServiceStatus();
+      this.remoteEnabled = shouldRun;
+      if (shouldRun) {
+        await this.relay.reconnectNow();
+      } else {
+        await this.relay.disconnect();
+      }
+      this.invalidateCaches();
+      return {
+        installed: true,
+        running: this.remoteEnabled,
+        raw: 'hosted relay mode',
+      };
     }
     if (shouldRun) {
       this.ensureManagedLocalRelayInstalled();
@@ -1167,6 +1214,33 @@ class DesktopRuntime {
     await this.relay.disconnect();
     this.invalidateCaches();
     return this.relayServiceStatus();
+  }
+
+  async trackAnalyticsEvent(eventName: string, payload?: Record<string, unknown>): Promise<void> {
+    const cfg = this.configStore.load();
+    const baseUrl = cfg.relayBaseUrl.replace(/\/$/, '');
+    const deviceIdHash = createHash('sha256').update(cfg.deviceId).digest('hex').slice(0, 24);
+    try {
+      await this.fetchJsonWithTimeout<{ ok: boolean }>(
+        `${baseUrl}/v1/analytics/events`,
+        800,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            eventId: randomUUID(),
+            name: eventName,
+            timestamp: Date.now(),
+            appVersion: app.getVersion(),
+            locale: cfg.locale,
+            channelTag: 'desktop',
+            deviceIdHash,
+            payload: payload || {},
+          }),
+        },
+      );
+    } catch {
+      // best-effort analytics, never block product flow
+    }
   }
 }
 
@@ -1422,6 +1496,8 @@ async function registerIpcHandlers() {
   ipcMain.handle('ipc.getRelaySettings', async () => runtime.getRelaySettings());
   ipcMain.handle('ipc.setRelaySettings', async (_evt, relaySettings: Partial<RelaySettings>) => runtime.setRelaySettings(relaySettings));
   ipcMain.handle('ipc.setRelayBaseUrl', async (_evt, relayBaseUrl: string) => runtime.setRelayBaseUrl(relayBaseUrl));
+  ipcMain.handle('ipc.useOfficialRelay', async () => runtime.useOfficialHostedRelay());
+  ipcMain.handle('ipc.useSelfHostedRelay', async () => runtime.useLocalSelfHostedRelay());
   ipcMain.handle('ipc.checkRelayHealth', async () => await runtime.checkRelayHealth());
   ipcMain.handle('ipc.getHealth', async () => await runtime.getHealth());
   ipcMain.handle('ipc.getAppSnapshot', async () => await runtime.getAppSnapshot());
@@ -1443,6 +1519,10 @@ async function registerIpcHandlers() {
   ipcMain.handle('ipc.getLogsTail', async (_evt, file: 'agent.log' | 'relay.log', lines?: number) => runtime.getLogsTail(file, lines));
   ipcMain.handle('ipc.openLogsDir', async () => await runtime.openLogsDir());
   ipcMain.handle('ipc.openFeedbackIssues', async () => await runtime.openFeedbackIssues());
+  ipcMain.handle('ipc.trackAnalyticsEvent', async (_evt, eventName: string, payload?: Record<string, unknown>) => {
+    await runtime.trackAnalyticsEvent(eventName, payload);
+    return { ok: true };
+  });
   ipcMain.handle('ipc.getWindowMode', async () => ({
     mode: currentWindowMode,
     focusSection: currentWindowFocusSection,

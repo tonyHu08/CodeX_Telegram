@@ -1,103 +1,101 @@
 # Codex Bridge Desktop
 
-[中文](#中文) | [English](#english)
+[English](#english) | [中文](#中文)
 
 ## English
 
-Remote-control your local Codex from Telegram, as if you never left your desk.
+Control your local Codex threads from Telegram in under 2 minutes.
 
-Codex Bridge Desktop turns Codex into a mobile-operable workflow: send tasks from your phone, bind to the exact thread you care about, review approvals, and get final responses back in Telegram.
+Codex Bridge is built for the exact pain point many people hit today: Codex is powerful on desktop, but your work stalls the moment you step away from your machine. This project keeps your real Codex thread alive on your phone, with status, approvals, and results in one chat.
 
-![Codex Bridge Icon](./apps/desktop/electron/assets/cab-brand-icon.png)
+![App Icon](./apps/desktop/electron/assets/cab-brand-icon.png)
 
-### Why this exists
+### Why people star this project
 
-Codex is great on desktop, but real work does not stop when you step away.
+- No CLI in the main path.
+- Remote control is thread-aware (`/threads`, `/bind`, `/current`).
+- Safe remote execution with approval commands (`/approve`, `/deny`).
+- Menu bar quick controls for online state and remote switch.
+- Built-in bilingual UX (English + Chinese).
 
-This project solves exactly that:
-- Continue Codex conversations from your phone.
-- Keep thread-level control (`/threads`, `/bind`, `/current`) instead of a generic chat relay.
-- Handle approvals remotely (`/approve`, `/deny`) with clear visibility.
-- Check Codex usage quickly (`/usage`, `/limits`).
+### What you can do
 
-### What you can do today
+- Send text or image input from Telegram to the bound Codex thread.
+- Watch execution state + final response in the same Telegram chat.
+- Query Codex limits with `/usage` (alias: `/limits`).
+- Cancel long runs with `/cancel`.
+- Run official hosted mode (recommended) or switch to self-hosted mode.
 
-- Bind Telegram to a specific Codex thread and run remote turns.
-- Send text and image inputs from Telegram.
-- See command/status/final response in the same Telegram chat.
-- Use macOS menu bar for quick state and remote on/off.
-- Run bilingual experience (English + Chinese) across desktop + Telegram responses.
+### 2-minute setup (official hosted path)
 
-### Experience flow
+1. Download the latest desktop build from [Releases](https://github.com/tonyHu08/CodeX_Bridge/releases).
+2. Open the app and finish the 3-step onboarding:
+   1. Codex environment check.
+   2. Phone pairing (QR / deep link).
+   3. In Telegram, send `/threads` and bind one thread.
+3. Send your first remote message directly in Telegram.
+
+No BotFather token is required in official hosted mode.
+
+### Command cheat sheet
+
+- `/threads` list recent threads and bind quickly.
+- `/bind latest` bind latest thread.
+- `/bind <index|threadId>` bind target thread.
+- `/current` show snapshot of current bound thread.
+- `/status` show bridge status.
+- `/usage` or `/limits` show Codex limits.
+- `/cancel` stop running task.
+- `/unbind` clear current binding.
+
+### Visual flow
 
 ```mermaid
 flowchart LR
-    A["Install Desktop App"] --> B["Paste Telegram Bot Token"]
-    B --> C["Pair Phone (QR / deep link)"]
-    C --> D["Send /threads in Telegram"]
-    D --> E["Bind thread (/bind latest or index)"]
-    E --> F["Send tasks remotely"]
-    F --> G["Receive status + final response"]
+    A["Install app"] --> B["Pair phone in onboarding"]
+    B --> C["Telegram: /threads"]
+    C --> D["Pick and bind a thread"]
+    D --> E["Send remote task"]
+    E --> F["Receive status + final response"]
 ```
 
-### Architecture (high level)
+### Architecture
 
 ```mermaid
 flowchart TB
-    TG["Telegram User"] --> BOT["Telegram Bot"]
-    BOT --> RELAY["Local Relay (127.0.0.1)"]
-    RELAY --> AGENT["Bridge Agent"]
-    AGENT --> APP["Codex App Server (JSON-RPC)"]
-    APP --> THREAD["Bound Codex Thread"]
-    THREAD --> APP --> AGENT --> RELAY --> BOT --> TG
+    U["Telegram user"] --> T["Telegram bot"]
+    T --> R["Bridge relay (hosted/local)"]
+    R --> A["Desktop agent"]
+    A --> C["Codex App Server JSON-RPC"]
+    C --> TH["Selected Codex thread"]
+    TH --> C --> A --> R --> T --> U
 ```
 
----
+### Screenshots and media
 
-## Quick Start (2-3 minutes)
+![Onboarding placeholder](./assets/press-kit/screens/onboarding-placeholder.png)
+![Threads placeholder](./assets/press-kit/screens/threads-placeholder.png)
+![Approval placeholder](./assets/press-kit/screens/approval-placeholder.png)
 
-### 1. Download and open
-1. Download latest build from [Releases](https://github.com/tonyHu08/CodeX_Bridge/releases).
-2. Open `Codex Bridge Desktop`.
-3. Make sure Codex App is installed and logged in on this Mac.
+- [Press kit](./assets/press-kit/README.md)
+- [Launch playbook](./docs/LAUNCH_PLAYBOOK.md)
+- [User stories](./docs/USER_STORIES.md)
 
-### 2. Create your Telegram bot
-1. Open `@BotFather` in Telegram.
-2. Run `/newbot`.
-3. Copy the Bot Token.
+### Docs
 
-### 3. Pair desktop with phone
-1. Paste Token in the desktop app and save.
-2. Click pairing.
-3. Open pairing link (or scan QR) in Telegram.
+- [Commands](./docs/COMMANDS.md)
+- [Configuration](./docs/CONFIG.md)
+- [Architecture details](./docs/ARCHITECTURE.md)
+- [Operations](./docs/OPERATIONS.md)
+- [Relay API](./docs/API.md)
+- [Privacy](./docs/PRIVACY.md)
+- [Threat model](./docs/THREAT_MODEL.md)
+- [Self-hosting](./docs/SELF_HOSTING.md)
+- [Troubleshooting](./docs/TROUBLESHOOTING.md)
 
-### 4. Bind a Codex thread
-1. Send `/threads` in Telegram.
-2. Pick one thread button or run `/bind latest`.
-3. Send normal text to start remote execution.
+### Development
 
-### 5. Daily commands
-- `/threads`
-- `/bind latest`
-- `/current`
-- `/status`
-- `/usage` (alias: `/limits`)
-- `/cancel`
-- `/unbind`
-
----
-
-## Developer Guide
-
-### Monorepo layout
-- `apps/desktop`: Electron + React desktop app (onboarding + app home + menu bar).
-- `packages/bridge-core`: orchestration, Codex client, approvals, persistence.
-- `services/cloud-relay`: optional self-hosted relay.
-- `src` (legacy): earlier implementation kept for compatibility.
-
-### Local development
 ```bash
-cd /path/to/codex-remote-bridge
 npm install
 npm run setup
 npm run dev:relay
@@ -105,65 +103,59 @@ npm run build:desktop
 npm run start:desktop
 ```
 
-### Quality checks
 ```bash
 npm run typecheck
 npm run build
 ```
 
-### Environment variables
-- `HOST` (default `127.0.0.1`)
-- `PORT` (default `8787`)
-- `RELAY_PUBLIC_BASE_URL` (default `http://127.0.0.1:8787`)
-- `RELAY_BOT_USERNAME`
-- `TELEGRAM_BOT_TOKEN`
-- `BRIDGE_LOCALE` (`en` or `zh`)
-
-### More docs
-- [Configuration](./docs/CONFIG.md)
-- [Commands](./docs/COMMANDS.md)
-- [Architecture](./docs/ARCHITECTURE.md)
-- [Operations](./docs/OPERATIONS.md)
-- [Troubleshooting](./docs/TROUBLESHOOTING.md)
-- [Privacy](./docs/PRIVACY.md)
-- [Self-hosting](./docs/SELF_HOSTING.md)
-- [Threat model](./docs/THREAT_MODEL.md)
-
 ---
 
 ## 中文
 
-用 Telegram 远程操控本机 Codex，让你离开电脑也能持续推进对话和任务。
+把本机 Codex 远程装进 Telegram，2 分钟内就能发出第一条远程指令。
 
-### 这个项目能解决什么问题
-- 人不在电脑前，Codex 对话就中断。
-- 手机端缺少 thread 级别控制（不仅仅是“转发消息”）。
-- 远程审批、查看状态、查看用量缺少统一入口。
+Codex Bridge 解决的是一个非常实际的问题：你离开电脑后，Codex 对话就中断。这个项目让你在手机上继续操作同一个 thread，保持上下文、审批和结果回包的一致性。
 
-Codex Bridge Desktop 提供“桌面 + Telegram”一体化远程体验：  
-线程可绑定、状态可追踪、审批可确认、结果可回包。
+### 核心价值
+
+- 主路径不依赖命令行。
+- 不是普通“消息转发”，而是 thread 级远程控制。
+- 支持远程审批和状态追踪。
+- 菜单栏可直接查看状态、开关远程。
+- 桌面端和 Telegram 双语体验（中/英）。
 
 ### 已支持能力
-- Telegram 文本/图片输入转发到绑定 thread。
-- `/threads` 查看最近线程并绑定。
-- `/approve` `/deny` 远程审批。
-- `/usage` `/limits` 查询用量。
-- 菜单栏快速查看在线状态与远程开关。
-- 桌面端与 Telegram 均支持中英文。
 
-### 快速上手
-1. 在 [Releases](https://github.com/tonyHu08/CodeX_Bridge/releases) 下载桌面端并打开。  
-2. 在 `@BotFather` 创建机器人并拿到 Token。  
-3. 在桌面端保存 Token 并完成配对。  
-4. Telegram 发送 `/threads` 后绑定线程。  
-5. 直接发送消息开始远程操作。
+- Telegram 文本/图片输入转发到绑定 thread。
+- `/threads` 查看并快速绑定会话。
+- `/usage` / `/limits` 查看 Codex 用量。
+- `/cancel` 终止长任务。
+- 官方托管模式（推荐）与本地自托管模式可切换。
+
+### 快速开始（官方托管）
+
+1. 在 [Releases](https://github.com/tonyHu08/CodeX_Bridge/releases) 下载并打开桌面 App。
+2. 按向导完成三步：
+   1. Codex 环境检测。
+   2. 手机配对（扫码或 deep link）。
+   3. Telegram 发送 `/threads` 并绑定线程。
+3. 直接在 Telegram 发送消息开始远程操作。
+
+说明：官方托管模式下，不需要手动去 BotFather 创建 Token。
 
 ### 常用命令
-- `/threads`：列出最近线程
+
+- `/threads`：查看最近线程并快速绑定
 - `/bind latest`：绑定最新线程
 - `/bind <编号|threadId>`：绑定指定线程
-- `/current`：查看当前 thread 快照
-- `/status`：查看当前状态
-- `/usage`：查看 Codex 用量
+- `/current`：查看当前线程快照
+- `/status`：查看桥接状态
+- `/usage` 或 `/limits`：查看用量
 - `/cancel`：终止当前任务
-- `/unbind`：解绑线程
+- `/unbind`：解除当前绑定
+
+### 相关文档
+
+- [发布增长手册](./docs/LAUNCH_PLAYBOOK.md)
+- [用户故事脚本](./docs/USER_STORIES.md)
+- [媒体素材包](./assets/press-kit/README.md)

@@ -9,6 +9,8 @@ declare global {
       getRelaySettings: () => Promise<any>;
       setRelaySettings: (relaySettings: { telegramBotToken?: string; relayBotUsername?: string }) => Promise<any>;
       setRelayBaseUrl: (relayBaseUrl: string) => Promise<any>;
+      useOfficialRelay: () => Promise<any>;
+      useSelfHostedRelay: () => Promise<any>;
       checkRelayHealth: () => Promise<any>;
       getHealth: () => Promise<any>;
       startPairing: () => Promise<any>;
@@ -28,6 +30,7 @@ declare global {
       getLogsTail: (file: 'agent.log' | 'relay.log', lines?: number) => Promise<string>;
       openLogsDir: () => Promise<string>;
       openFeedbackIssues: () => Promise<void>;
+      trackAnalyticsEvent: (eventName: string, payload?: Record<string, unknown>) => Promise<{ ok: boolean }>;
       onWindowModeChanged: (
         handler: (payload: { mode: 'onboarding' | 'advanced'; focusSection: 'phone' | 'autostart' | 'bot' | null }) => void
       ) => () => void;

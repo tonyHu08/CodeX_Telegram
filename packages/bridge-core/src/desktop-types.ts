@@ -31,6 +31,16 @@ export interface DesktopConfig {
   locale: BridgeLocale;
 }
 
+export type AnalyticsEventName =
+  | 'app_opened'
+  | 'onboarding_started'
+  | 'pairing_qr_shown'
+  | 'pairing_confirmed'
+  | 'first_threads_viewed'
+  | 'first_thread_bound'
+  | 'first_turn_completed'
+  | (string & {});
+
 export interface PairingSession {
   pairingSessionId: string;
   qrPayload: string;

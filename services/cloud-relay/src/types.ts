@@ -19,6 +19,36 @@ export interface DeviceBinding {
   createdAt: number;
 }
 
+export interface RegisteredDevice {
+  deviceId: string;
+  deviceToken: string;
+  deviceFingerprint: string;
+  appVersion: string;
+  platform: string;
+  createdAt: number;
+}
+
+export type AnalyticsEventName =
+  | 'app_opened'
+  | 'onboarding_started'
+  | 'pairing_qr_shown'
+  | 'pairing_confirmed'
+  | 'first_threads_viewed'
+  | 'first_thread_bound'
+  | 'first_turn_completed'
+  | (string & {});
+
+export interface AnalyticsEvent {
+  eventId: string;
+  name: AnalyticsEventName;
+  timestamp: number;
+  appVersion: string;
+  locale: 'zh' | 'en' | string;
+  channelTag: string;
+  deviceIdHash: string;
+  payload?: Record<string, unknown>;
+}
+
 export interface IncomingUserMessageEvent {
   type: 'incomingUserMessage';
   chatId: string;

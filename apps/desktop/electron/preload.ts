@@ -7,6 +7,8 @@ const desktopApi = {
   getRelaySettings: async () => await ipcRenderer.invoke('ipc.getRelaySettings'),
   setRelaySettings: async (relaySettings: { telegramBotToken?: string; relayBotUsername?: string }) => await ipcRenderer.invoke('ipc.setRelaySettings', relaySettings),
   setRelayBaseUrl: async (relayBaseUrl: string) => await ipcRenderer.invoke('ipc.setRelayBaseUrl', relayBaseUrl),
+  useOfficialRelay: async () => await ipcRenderer.invoke('ipc.useOfficialRelay'),
+  useSelfHostedRelay: async () => await ipcRenderer.invoke('ipc.useSelfHostedRelay'),
   checkRelayHealth: async () => await ipcRenderer.invoke('ipc.checkRelayHealth'),
   getHealth: async () => await ipcRenderer.invoke('ipc.getHealth'),
   startPairing: async () => await ipcRenderer.invoke('ipc.startPairing'),
@@ -26,6 +28,7 @@ const desktopApi = {
   getLogsTail: async (file: 'agent.log' | 'relay.log', lines = 120) => await ipcRenderer.invoke('ipc.getLogsTail', file, lines),
   openLogsDir: async () => await ipcRenderer.invoke('ipc.openLogsDir'),
   openFeedbackIssues: async () => await ipcRenderer.invoke('ipc.openFeedbackIssues'),
+  trackAnalyticsEvent: async (eventName: string, payload?: Record<string, unknown>) => await ipcRenderer.invoke('ipc.trackAnalyticsEvent', eventName, payload),
   onWindowModeChanged: (
     handler: (payload: { mode: 'onboarding' | 'advanced'; focusSection: 'phone' | 'autostart' | 'bot' | null }) => void,
   ) => {

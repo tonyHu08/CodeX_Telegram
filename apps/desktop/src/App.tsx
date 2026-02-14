@@ -43,6 +43,7 @@ type ServiceState = {
 type AppSnapshot = {
   healthOk: boolean;
   botConfigured: boolean;
+  usingHostedRelay: boolean;
   relayRunning: boolean;
   relayConnected: boolean;
   paired: boolean;
@@ -65,6 +66,7 @@ type AppSnapshot = {
     cwd: string | null;
   } | null;
   botUsername: string | null;
+  officialBotUsername: string | null;
   lastError: string | null;
 };
 
@@ -100,6 +102,13 @@ type UiDict = {
   autoStartDesc: string;
   botConfigTitle: string;
   botConfigDesc: string;
+  relayModeTitle: string;
+  relayModeHosted: string;
+  relayModeSelfHosted: string;
+  switchToHosted: string;
+  switchToSelfHosted: string;
+  hostedNoBotNeeded: string;
+  hostedModeHint: string;
   currentBotLabel: string;
   botTokenRequired: string;
   botUsernameOptional: string;
@@ -154,6 +163,8 @@ type UiDict = {
   doneDesc: string;
   actionRunHealth: string;
   actionSaveBot: string;
+  actionSwitchHosted: string;
+  actionSwitchSelfHosted: string;
   actionPairing: string;
   actionRepair: string;
   actionToggleRemoteOn: string;
@@ -200,6 +211,13 @@ const UI: Record<Locale, UiDict> = {
     autoStartDesc: '电脑重启后自动恢复能力。',
     botConfigTitle: '机器人配置',
     botConfigDesc: '仅在你更换 Telegram Bot 时需要修改。',
+    relayModeTitle: '连接模式',
+    relayModeHosted: '官方托管（推荐）',
+    relayModeSelfHosted: '本地自托管',
+    switchToHosted: '切换到官方托管',
+    switchToSelfHosted: '切换到本地自托管',
+    hostedNoBotNeeded: '官方托管模式无需 BotFather 和 Token。',
+    hostedModeHint: '如需使用你自己的机器人，可切换到本地自托管。',
     currentBotLabel: '当前机器人',
     botTokenRequired: 'Bot Token（必填）',
     botUsernameOptional: 'Bot 用户名（可选）',
@@ -259,6 +277,8 @@ const UI: Record<Locale, UiDict> = {
     doneDesc: '已就绪，将自动隐藏到菜单栏。',
     actionRunHealth: '正在检测 Codex 环境...',
     actionSaveBot: '正在保存机器人配置...',
+    actionSwitchHosted: '正在切换到官方托管...',
+    actionSwitchSelfHosted: '正在切换到本地自托管...',
     actionPairing: '正在创建配对...',
     actionRepair: '正在重建手机配对...',
     actionToggleRemoteOn: '正在开启远程...',
@@ -303,6 +323,13 @@ const UI: Record<Locale, UiDict> = {
     autoStartDesc: 'Restore capability automatically after reboot.',
     botConfigTitle: 'Bot configuration',
     botConfigDesc: 'Only update this when switching Telegram bot account.',
+    relayModeTitle: 'Connection mode',
+    relayModeHosted: 'Official hosted (recommended)',
+    relayModeSelfHosted: 'Local self-hosted',
+    switchToHosted: 'Switch to official hosted',
+    switchToSelfHosted: 'Switch to local self-hosted',
+    hostedNoBotNeeded: 'Official hosted mode does not require BotFather or token input.',
+    hostedModeHint: 'Switch to local self-hosted only if you want your own bot token.',
     currentBotLabel: 'Current bot',
     botTokenRequired: 'Bot Token (required)',
     botUsernameOptional: 'Bot username (optional)',
@@ -362,6 +389,8 @@ const UI: Record<Locale, UiDict> = {
     doneDesc: 'Ready. Window will hide to menu bar.',
     actionRunHealth: 'Checking Codex environment...',
     actionSaveBot: 'Saving bot configuration...',
+    actionSwitchHosted: 'Switching to official hosted mode...',
+    actionSwitchSelfHosted: 'Switching to local self-hosted mode...',
     actionPairing: 'Creating pairing session...',
     actionRepair: 'Repairing phone pairing...',
     actionToggleRemoteOn: 'Turning remote on...',
@@ -422,6 +451,7 @@ function formatExpireTime(epochMs: number, locale: Locale): string {
 type BusyState = {
   health: boolean;
   saveBot: boolean;
+  relayMode: boolean;
   pairing: boolean;
   repairPairing: boolean;
   toggleRemote: boolean;
@@ -433,6 +463,7 @@ type BusyState = {
 const EMPTY_BUSY: BusyState = {
   health: false,
   saveBot: false,
+  relayMode: false,
   pairing: false,
   repairPairing: false,
   toggleRemote: false,
@@ -472,6 +503,7 @@ export function App() {
   const autostartSectionRef = useRef<HTMLDivElement | null>(null);
   const botSectionRef = useRef<HTMLDivElement | null>(null);
   const autoHideTriggeredRef = useRef(false);
+  const trackedEventsRef = useRef<Set<string>>(new Set());
 
   const locale: Locale = snapshot?.locale || 'zh';
   const ui = useMemo(() => getTexts(locale), [locale]);
@@ -548,11 +580,20 @@ export function App() {
       await Promise.all([refreshSnapshot(), refreshRelaySettings(), refreshServices()]);
       const tail = await window.desktopApi.getLogsTail('agent.log', 120);
       setLogContent(tail || '');
+      void window.desktopApi.trackAnalyticsEvent('app_opened');
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
     } finally {
       setBooting(false);
     }
+  }
+
+  function trackEventOnce(name: string, payload?: Record<string, unknown>) {
+    if (trackedEventsRef.current.has(name)) {
+      return;
+    }
+    trackedEventsRef.current.add(name);
+    void window.desktopApi.trackAnalyticsEvent(name, payload);
   }
 
   async function runHealth() {
@@ -603,6 +644,9 @@ export function App() {
         status: 'pending',
         expiresAt: session.expiresAt,
       });
+      void window.desktopApi.trackAnalyticsEvent('pairing_qr_shown', {
+        bot: session.botUsername || snapshot?.officialBotUsername || '',
+      });
       await refreshSnapshot();
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
@@ -618,6 +662,9 @@ export function App() {
     try {
       const status = await window.desktopApi.checkPairingStatus(pairing.pairingSessionId);
       setPairingStatus(status);
+      if (status.status === 'confirmed') {
+        trackEventOnce('pairing_confirmed');
+      }
       await refreshSnapshot();
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
@@ -694,6 +741,24 @@ export function App() {
     }
   }
 
+  async function switchRelayMode(target: 'hosted' | 'self-hosted') {
+    setBusyFlag('relayMode', true);
+    setError('');
+    try {
+      if (target === 'hosted') {
+        await window.desktopApi.useOfficialRelay();
+      } else {
+        await window.desktopApi.useSelfHostedRelay();
+      }
+      await Promise.all([refreshSnapshot(), refreshRelaySettings(), refreshServices()]);
+      setNoticeWithAutoClear(ui.saved);
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
+    } finally {
+      setBusyFlag('relayMode', false);
+    }
+  }
+
   async function copyLogs() {
     try {
       await navigator.clipboard.writeText(logContent || '');
@@ -750,6 +815,18 @@ export function App() {
   }, [pairing?.pairingSessionId, pairingStatus?.status]);
 
   useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+    if (snapshot.onboardingStep < 5) {
+      trackEventOnce('onboarding_started');
+    }
+    if (snapshot.threadBound) {
+      trackEventOnce('first_thread_bound');
+    }
+  }, [snapshot]);
+
+  useEffect(() => {
     if (windowMode !== 'advanced') {
       return;
     }
@@ -794,6 +871,9 @@ export function App() {
   const operationText = useMemo(() => {
     if (busy.health) return ui.actionRunHealth;
     if (busy.saveBot) return ui.actionSaveBot;
+    if (busy.relayMode) {
+      return snapshot?.usingHostedRelay ? ui.actionSwitchSelfHosted : ui.actionSwitchHosted;
+    }
     if (busy.pairing) return ui.actionPairing;
     if (busy.repairPairing) return ui.actionRepair;
     if (busy.toggleRemote) return remoteEnabled ? ui.actionToggleRemoteOn : ui.actionToggleRemoteOff;
@@ -826,6 +906,20 @@ export function App() {
     }
 
     if (onboardingStep === 2) {
+      if (snapshot?.usingHostedRelay) {
+        return (
+          <div className="panel-card">
+            <h3>{ui.step2Title}</h3>
+            <p className="muted">{ui.hostedNoBotNeeded}</p>
+            <p className="muted">{ui.currentBotLabel}: @{snapshot.officialBotUsername || ui.unknownBot}</p>
+            <div className="actions">
+              <button onClick={() => void refreshSnapshot()}>{ui.refreshNow}</button>
+              <button onClick={() => void switchRelayMode('self-hosted')} disabled={busy.relayMode}>{ui.switchToSelfHosted}</button>
+            </div>
+            <p className="muted">{ui.step2Configured}</p>
+          </div>
+        );
+      }
       return (
         <div className="panel-card">
           <div className="title-row">
@@ -858,6 +952,7 @@ export function App() {
           </div>
           <div className="actions">
             <button onClick={() => void saveRelaySettings()} disabled={busy.saveBot}>{ui.saveApply}</button>
+            <button onClick={() => void switchRelayMode('hosted')} disabled={busy.relayMode}>{ui.switchToHosted}</button>
             <button onClick={() => void refreshSnapshot()}>{ui.refreshNow}</button>
           </div>
           <p className="muted">{snapshot?.botConfigured ? ui.step2Configured : ui.step2NotConfigured}</p>
@@ -1046,29 +1141,42 @@ export function App() {
             <div className="settings-group" ref={botSectionRef}>
               <div className="title-row">
                 <h3>{ui.botConfigTitle}</h3>
-                <button type="button" className="help-dot" title={ui.step2HelpTitle} onClick={() => setShowBotGuide(true)}>?</button>
+                {!snapshot?.usingHostedRelay && (
+                  <button type="button" className="help-dot" title={ui.step2HelpTitle} onClick={() => setShowBotGuide(true)}>?</button>
+                )}
               </div>
               <p className="muted">{ui.botConfigDesc}</p>
+              <p className="muted"><strong>{ui.relayModeTitle}:</strong> {snapshot?.usingHostedRelay ? ui.relayModeHosted : ui.relayModeSelfHosted}</p>
               <p className="muted">{ui.currentBotLabel}: {snapshot?.botUsername ? `@${snapshot.botUsername}` : ui.unknownBot}</p>
-              <div className="input-row">
-                <input
-                  type={showBotToken ? 'text' : 'password'}
-                  value={relaySettings.telegramBotToken}
-                  placeholder={ui.botTokenRequired}
-                  onChange={(event) => setRelaySettings((prev) => ({ ...prev, telegramBotToken: event.target.value }))}
-                />
-                <button onClick={() => setShowBotToken((prev) => !prev)}>{showBotToken ? ui.hide : ui.show}</button>
-              </div>
-              <div className="input-row">
-                <input
-                  value={relaySettings.relayBotUsername}
-                  placeholder={ui.botUsernameOptional}
-                  onChange={(event) => setRelaySettings((prev) => ({ ...prev, relayBotUsername: event.target.value }))}
-                />
-              </div>
-              <div className="actions compact">
-                <button onClick={() => void saveRelaySettings()} disabled={busy.saveBot}>{ui.saveApply}</button>
-              </div>
+              {snapshot?.usingHostedRelay ? (
+                <div className="actions compact">
+                  <button onClick={() => void switchRelayMode('self-hosted')} disabled={busy.relayMode}>{ui.switchToSelfHosted}</button>
+                  <p className="muted">{ui.hostedModeHint}</p>
+                </div>
+              ) : (
+                <>
+                  <div className="input-row">
+                    <input
+                      type={showBotToken ? 'text' : 'password'}
+                      value={relaySettings.telegramBotToken}
+                      placeholder={ui.botTokenRequired}
+                      onChange={(event) => setRelaySettings((prev) => ({ ...prev, telegramBotToken: event.target.value }))}
+                    />
+                    <button onClick={() => setShowBotToken((prev) => !prev)}>{showBotToken ? ui.hide : ui.show}</button>
+                  </div>
+                  <div className="input-row">
+                    <input
+                      value={relaySettings.relayBotUsername}
+                      placeholder={ui.botUsernameOptional}
+                      onChange={(event) => setRelaySettings((prev) => ({ ...prev, relayBotUsername: event.target.value }))}
+                    />
+                  </div>
+                  <div className="actions compact">
+                    <button onClick={() => void saveRelaySettings()} disabled={busy.saveBot}>{ui.saveApply}</button>
+                    <button onClick={() => void switchRelayMode('hosted')} disabled={busy.relayMode}>{ui.switchToHosted}</button>
+                  </div>
+                </>
+              )}
             </div>
           </section>
 
