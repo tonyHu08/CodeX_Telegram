@@ -204,6 +204,7 @@ function readJsonFileIfExists(filePath: string): Record<string, unknown> {
 }
 
 function createTrayIconByState(state: RemoteState) {
+  void state;
   const iconPath2x = path.join(__dirname, 'assets', 'trayTemplate@2x.png');
   const iconPath = path.join(__dirname, 'assets', 'trayTemplate.png');
   const colorIconPath = path.join(__dirname, 'assets', 'cab-brand-icon.png');
@@ -220,9 +221,8 @@ function createTrayIconByState(state: RemoteState) {
     icon = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(fallbackSvg).toString('base64')}`);
   }
 
-  const targetSize = state === 'offline' ? 16 : 18;
-  const sized = icon.resize({ width: targetSize, height: targetSize });
-  sized.setTemplateImage(false);
+  const sized = icon.resize({ width: 18, height: 18 });
+  sized.setTemplateImage(true);
   return sized;
 }
 
