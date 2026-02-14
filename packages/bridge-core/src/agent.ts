@@ -53,6 +53,9 @@ export interface BridgeAgentOptions {
 const DEVICE_BINDING_PREFIX = 'device:';
 const THREAD_CACHE_TTL_MS = 10 * 60 * 1000;
 const THREAD_LIST_LIMIT = 20;
+const THREAD_STATUS_PROBE_LIMIT = 10;
+const THREAD_STATUS_PROBE_TIMEOUT_MS = 6_000;
+const THREAD_STATUS_PROBE_BATCH_SIZE = 4;
 const GLOBAL_STATE_CACHE_TTL_MS = 15_000;
 const CODEX_GLOBAL_STATE_PATH = process.env.CODEX_GLOBAL_STATE_PATH
   || (process.env.HOME ? path.join(process.env.HOME, '.codex', '.codex-global-state.json') : '');
@@ -92,7 +95,7 @@ interface DisplayThreadsState {
   usingSidebarVisibility: boolean;
 }
 
-type ThreadTaskState = 'running' | 'queued' | 'unknown';
+type ThreadTaskState = 'running' | 'queued' | 'idle' | 'unknown';
 
 interface TurnConversationSummary {
   turnId: string;
@@ -463,7 +466,13 @@ function buildThreadButtonTitle(
   taskState: ThreadTaskState,
 ): string {
   const title = truncate(compactText(item.title || localeText(locale, `会话 ${index + 1}`, `Thread ${index + 1}`)), 24);
-  const status = taskState === 'running' ? '⏳' : taskState === 'queued' ? '🕒' : '⚪';
+  const status = taskState === 'running'
+    ? '⏳'
+    : taskState === 'queued'
+      ? '🕒'
+      : taskState === 'idle'
+        ? '💤'
+        : '⚪';
   return `${isCurrent ? '✅ ' : ''}${status} 🧵 ${title}`;
 }
 
@@ -985,7 +994,73 @@ export class BridgeAgent extends EventEmitter {
     if (taskState === 'queued') {
       return this.t('🕒 排队中', '🕒 Queued');
     }
+    if (taskState === 'idle') {
+      return this.t('💤 空闲', '💤 Idle');
+    }
     return this.t('⚪ 未观测', '⚪ Unobserved');
+  }
+
+  private inferThreadTaskStateFromSnapshot(snapshot: ThreadConversationSnapshot | null): ThreadTaskState {
+    if (!snapshot || !Array.isArray(snapshot.recentTurns) || snapshot.recentTurns.length === 0) {
+      return 'unknown';
+    }
+    const statuses = snapshot.recentTurns
+      .slice(-3)
+      .map((turn) => String(turn.status || '').toLowerCase());
+
+    if (statuses.some((status) => status === 'inprogress' || status === 'in_progress' || status === 'running')) {
+      return 'running';
+    }
+    if (statuses.some((status) => status === 'queued' || status === 'pending')) {
+      return 'queued';
+    }
+    if (statuses.some((status) => status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'canceled')) {
+      return 'idle';
+    }
+    return 'unknown';
+  }
+
+  private async probeThreadTaskStates(threads: ThreadSummary[]): Promise<Map<string, ThreadTaskState>> {
+    const states = new Map<string, ThreadTaskState>();
+    if (threads.length === 0) {
+      return states;
+    }
+
+    for (const thread of threads) {
+      const runtimeState = this.getThreadTaskState(thread.id);
+      if (runtimeState !== 'unknown') {
+        states.set(thread.id, runtimeState);
+      }
+    }
+
+    const toProbe = threads
+      .filter((thread) => !states.has(thread.id))
+      .slice(0, THREAD_STATUS_PROBE_LIMIT);
+    if (toProbe.length === 0) {
+      return states;
+    }
+
+    for (let i = 0; i < toProbe.length; i += THREAD_STATUS_PROBE_BATCH_SIZE) {
+      const batch = toProbe.slice(i, i + THREAD_STATUS_PROBE_BATCH_SIZE);
+      const settled = await Promise.allSettled(
+        batch.map(async (thread) => {
+          const snapshot = await withTimeout(
+            this.fetchThreadConversationSnapshot(thread.id),
+            THREAD_STATUS_PROBE_TIMEOUT_MS,
+            `thread-status-probe:${thread.id}`,
+          );
+          return { threadId: thread.id, taskState: this.inferThreadTaskStateFromSnapshot(snapshot) };
+        }),
+      );
+
+      for (const item of settled) {
+        if (item.status === 'fulfilled') {
+          states.set(item.value.threadId, item.value.taskState);
+        }
+      }
+    }
+
+    return states;
   }
 
   async handleIncomingMessage(event: IncomingUserMessageEvent): Promise<void> {
@@ -1573,6 +1648,9 @@ export class BridgeAgent extends EventEmitter {
       return;
     }
 
+    const taskStates = await this.probeThreadTaskStates(displayItems.map((item) => item.thread));
+    const resolveTaskState = (threadId: string): ThreadTaskState => taskStates.get(threadId) || 'unknown';
+
     this.recentThreadsByChat.set(event.chatId, {
       threads: displayItems.map((item) => item.thread),
       updatedAt: nowMs(),
@@ -1602,7 +1680,7 @@ export class BridgeAgent extends EventEmitter {
         lines.push(`<b>📁 ${escapeTelegramHtml(currentGroup)}</b>`);
       }
       lines.push(
-        `${index + 1}. ${isCurrent ? '✅ ' : ''}<b>${escapeTelegramHtml(item.title)}</b> ${escapeTelegramHtml(this.formatThreadTaskStateLabel(this.getThreadTaskState(thread.id)))}`,
+        `${index + 1}. ${isCurrent ? '✅ ' : ''}<b>${escapeTelegramHtml(item.title)}</b> ${escapeTelegramHtml(this.formatThreadTaskStateLabel(resolveTaskState(thread.id)))}`,
       );
       lines.push(
         this.locale === 'en'
@@ -1616,7 +1694,7 @@ export class BridgeAgent extends EventEmitter {
     if (state.usingSidebarVisibility && state.hiddenCount > 0) {
       lines.push(this.locale === 'en' ? `Filtered sidebar-invisible threads: ${state.hiddenCount}` : `已过滤侧边栏不可见会话: ${state.hiddenCount}`);
     }
-    lines.push(this.t('状态说明：仅⏳/🕒表示桥接中任务；⚪表示当前未观测到桥接任务。', 'Status note: only ⏳/🕒 indicate bridge tasks; ⚪ means no bridge task currently observed.'));
+    lines.push(this.t('状态说明：⏳运行中 / 🕒排队中 / 💤空闲 / ⚪未观测。', 'Status note: ⏳ running / 🕒 queued / 💤 idle / ⚪ unobserved.'));
     lines.push('');
     lines.push(this.t('可用: /bind [编号] | /detail [编号] | /bind latest', 'Available: /bind [index] | /detail [index] | /bind latest'));
     lines.push(this.t('快速查看当前: /active', 'Quick view current: /active'));
@@ -1627,7 +1705,7 @@ export class BridgeAgent extends EventEmitter {
         displayItems,
         state.currentBinding?.threadId || null,
         this.locale,
-        (threadId) => this.getThreadTaskState(threadId),
+        (threadId) => resolveTaskState(threadId),
       ),
       parseMode: 'HTML',
     });
