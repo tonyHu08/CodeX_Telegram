@@ -1020,7 +1020,7 @@ export class BridgeAgent extends EventEmitter {
     if (statuses.some((status) => status === 'queued' || status === 'pending')) {
       return 'queued';
     }
-    if (statuses.some((status) => status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'canceled')) {
+    if (statuses.some((status) => status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'canceled' || status === 'interrupted')) {
       return 'idle';
     }
     return 'unknown';
@@ -1048,16 +1048,24 @@ export class BridgeAgent extends EventEmitter {
 
     for (let i = 0; i < toProbe.length; i += THREAD_STATUS_PROBE_BATCH_SIZE) {
       const batch = toProbe.slice(i, i + THREAD_STATUS_PROBE_BATCH_SIZE);
-      const settled = await Promise.allSettled(
+      const settled = await Promise.all(
         batch.map(async (thread) => {
-          const snapshot = await this.fetchThreadConversationSnapshot(thread.id);
-          return { threadId: thread.id, taskState: this.inferThreadTaskStateFromSnapshot(snapshot) };
+          try {
+            const snapshot = await this.fetchThreadConversationSnapshot(thread.id);
+            return { threadId: thread.id, taskState: this.inferThreadTaskStateFromSnapshot(snapshot) as ThreadTaskState };
+          } catch (error: any) {
+            this.logger.warn('Thread status probe failed; falling back to idle', {
+              threadId: thread.id,
+              error: error?.message || String(error),
+            });
+            return { threadId: thread.id, taskState: 'idle' as ThreadTaskState };
+          }
         }),
       );
 
       for (const item of settled) {
-        if (item.status === 'fulfilled') {
-          states.set(item.value.threadId, item.value.taskState);
+        if (item.threadId) {
+          states.set(item.threadId, item.taskState);
         }
       }
     }
@@ -1633,11 +1641,23 @@ export class BridgeAgent extends EventEmitter {
   }
 
   private async handleThreadsCommand(event: IncomingControlCommandEvent): Promise<void> {
-    const threads = await withTimeout(
-      this.listThreads(THREAD_LIST_LIMIT),
-      Math.min(this.options.requestTimeoutMs, 12_000),
-      'thread/list',
-    );
+    let threads: ThreadSummary[] = [];
+    try {
+      threads = await withTimeout(
+        this.listThreads(THREAD_LIST_LIMIT),
+        Math.min(this.options.requestTimeoutMs, 12_000),
+        'thread/list',
+      );
+    } catch (firstError: any) {
+      this.logger.warn('thread/list fast path failed, retrying once with longer timeout', {
+        error: firstError?.message || String(firstError),
+      });
+      threads = await withTimeout(
+        this.listThreads(THREAD_LIST_LIMIT),
+        Math.max(this.options.requestTimeoutMs, 25_000),
+        'thread/list(retry)',
+      );
+    }
     if (threads.length === 0) {
       this.emitFinal(event.chatId, event.messageId, this.t('当前没有可用会话。', 'No available threads found.'));
       return;
