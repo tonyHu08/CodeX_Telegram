@@ -92,7 +92,7 @@ interface DisplayThreadsState {
   usingSidebarVisibility: boolean;
 }
 
-type ThreadTaskState = 'running' | 'queued' | 'idle';
+type ThreadTaskState = 'running' | 'queued' | 'unknown';
 
 interface TurnConversationSummary {
   turnId: string;
@@ -463,7 +463,7 @@ function buildThreadButtonTitle(
   taskState: ThreadTaskState,
 ): string {
   const title = truncate(compactText(item.title || localeText(locale, `会话 ${index + 1}`, `Thread ${index + 1}`)), 24);
-  const status = taskState === 'running' ? '⏳' : taskState === 'queued' ? '🕒' : '✅';
+  const status = taskState === 'running' ? '⏳' : taskState === 'queued' ? '🕒' : '⚪';
   return `${isCurrent ? '✅ ' : ''}${status} 🧵 ${title}`;
 }
 
@@ -975,7 +975,7 @@ export class BridgeAgent extends EventEmitter {
     if (this.queuedByThread.has(threadId)) {
       return 'queued';
     }
-    return 'idle';
+    return 'unknown';
   }
 
   private formatThreadTaskStateLabel(taskState: ThreadTaskState): string {
@@ -985,7 +985,7 @@ export class BridgeAgent extends EventEmitter {
     if (taskState === 'queued') {
       return this.t('🕒 排队中', '🕒 Queued');
     }
-    return this.t('✅ 空闲', '✅ Idle');
+    return this.t('⚪ 未观测', '⚪ Unobserved');
   }
 
   async handleIncomingMessage(event: IncomingUserMessageEvent): Promise<void> {
@@ -1616,6 +1616,7 @@ export class BridgeAgent extends EventEmitter {
     if (state.usingSidebarVisibility && state.hiddenCount > 0) {
       lines.push(this.locale === 'en' ? `Filtered sidebar-invisible threads: ${state.hiddenCount}` : `已过滤侧边栏不可见会话: ${state.hiddenCount}`);
     }
+    lines.push(this.t('状态说明：仅⏳/🕒表示桥接中任务；⚪表示当前未观测到桥接任务。', 'Status note: only ⏳/🕒 indicate bridge tasks; ⚪ means no bridge task currently observed.'));
     lines.push('');
     lines.push(this.t('可用: /bind [编号] | /detail [编号] | /bind latest', 'Available: /bind [index] | /detail [index] | /bind latest'));
     lines.push(this.t('快速查看当前: /active', 'Quick view current: /active'));

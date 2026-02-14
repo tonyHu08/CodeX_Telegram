@@ -12,7 +12,7 @@
 
 ### Session commands
 - `/threads`
-  - Each thread now shows live task state inline (`⏳ running` / `🕒 queued` / `✅ idle`).
+  - Each thread shows bridge task state inline (`⏳ running` / `🕒 queued` / `⚪ unobserved`).
 - `/bind latest`
 - `/bind <threadId|index>`
 - `/usage` (alias: `/limits`)
@@ -41,7 +41,7 @@
 
 ### 会话命令
 - `/threads`
-  - 每个 thread 行内会展示任务状态（`⏳ 运行中` / `🕒 排队中` / `✅ 空闲`）。
+  - 每个 thread 行内会展示桥接任务状态（`⏳ 运行中` / `🕒 排队中` / `⚪ 未观测`）。
 - `/bind latest`
 - `/bind <threadId|编号>`
 - `/usage`（别名：`/limits`）

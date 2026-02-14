@@ -5,7 +5,7 @@ You can run your own relay and bot.
 
 ### Start relay
 ```bash
-cd /Users/junweihu/clawd/codex-remote-bridge/services/cloud-relay
+cd /path/to/codex-remote-bridge/services/cloud-relay
 npm install
 npm run dev
 ```
@@ -23,7 +23,7 @@ Set desktop relay URL to your hosted relay endpoint.
 
 ### 启动 relay
 ```bash
-cd /Users/junweihu/clawd/codex-remote-bridge/services/cloud-relay
+cd /path/to/codex-remote-bridge/services/cloud-relay
 npm install
 npm run dev
 ```

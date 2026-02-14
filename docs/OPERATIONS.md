@@ -3,7 +3,7 @@
 ## English
 ### Local dev
 ```bash
-cd /Users/junweihu/clawd/codex-remote-bridge
+cd /path/to/codex-remote-bridge
 npm install
 npm run setup
 npm run dev:relay
@@ -26,7 +26,7 @@ npm run dist:desktop
 ## 中文
 ### 本地开发
 ```bash
-cd /Users/junweihu/clawd/codex-remote-bridge
+cd /path/to/codex-remote-bridge
 npm install
 npm run setup
 npm run dev:relay
