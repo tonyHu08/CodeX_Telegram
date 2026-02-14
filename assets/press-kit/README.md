@@ -11,6 +11,9 @@ Use these files when publishing product pages, social posts, and launch articles
 - `screens/onboarding-placeholder.png` - onboarding placeholder.
 - `screens/threads-placeholder.png` - Telegram threads placeholder.
 - `screens/approval-placeholder.png` - approval flow placeholder.
+- `screens/telegram-pairing-result.png` - real Telegram pairing + first response screenshot.
+- `screens/telegram-threads-inline.png` - real `/threads` inline keyboard screenshot.
+- `screens/telegram-threads-status.png` - real `/threads` status screenshot.
 
 ## Recommended exports
 

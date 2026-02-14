@@ -73,12 +73,13 @@ flowchart TB
 
 ### Screenshots and media
 
-![Onboarding placeholder](./assets/press-kit/screens/onboarding-placeholder.png)
-![Threads placeholder](./assets/press-kit/screens/threads-placeholder.png)
-![Approval placeholder](./assets/press-kit/screens/approval-placeholder.png)
+![Telegram pairing result](./assets/press-kit/screens/telegram-pairing-result.png)
+![Telegram threads inline](./assets/press-kit/screens/telegram-threads-inline.png)
+![Telegram threads status](./assets/press-kit/screens/telegram-threads-status.png)
 
 - [Press kit](./assets/press-kit/README.md)
 - [Launch playbook](./docs/LAUNCH_PLAYBOOK.md)
+- [Launch posts (copy-ready)](./docs/LAUNCH_POSTS.md)
 - [User stories](./docs/USER_STORIES.md)
 
 ### Docs
@@ -157,5 +158,6 @@ Codex Bridge 解决的是一个非常实际的问题：你离开电脑后，Code
 ### 相关文档
 
 - [发布增长手册](./docs/LAUNCH_PLAYBOOK.md)
+- [首发文案模板（可直接复制）](./docs/LAUNCH_POSTS.md)
 - [用户故事脚本](./docs/USER_STORIES.md)
 - [媒体素材包](./assets/press-kit/README.md)
