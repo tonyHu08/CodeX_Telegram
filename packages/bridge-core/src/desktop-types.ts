@@ -61,7 +61,7 @@ export interface IncomingUserMessageEvent {
   createdAt: number;
 }
 
-export type ControlCommandName = 'threads' | 'bind' | 'status' | 'current' | 'active' | 'detail' | 'unbind' | 'cancel' | 'help';
+export type ControlCommandName = 'threads' | 'bind' | 'status' | 'current' | 'active' | 'detail' | 'usage' | 'unbind' | 'cancel' | 'help';
 
 export interface IncomingControlCommandEvent {
   type: 'incomingControlCommand';

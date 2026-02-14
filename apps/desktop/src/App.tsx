@@ -5,6 +5,7 @@ type WindowMode = 'onboarding' | 'advanced';
 type FocusSection = 'phone' | 'autostart' | 'bot' | null;
 type RemoteState = 'online' | 'partial' | 'offline';
 type Locale = 'zh' | 'en';
+type LogFile = 'agent.log' | 'relay.log';
 
 type HealthReport = {
   ok: boolean;
@@ -46,57 +47,97 @@ type AppSnapshot = {
   relayConnected: boolean;
   paired: boolean;
   threadBound: boolean;
+  statusChecks: {
+    codexReady: boolean;
+    remoteServiceRunning: boolean;
+    phonePaired: boolean;
+    threadBound: boolean;
+  };
   onboardingStep: 1 | 2 | 3 | 4 | 5;
   remoteState: RemoteState;
   locale: Locale;
   selectedThreadId: string | null;
+  currentThread: {
+    id: string;
+    title: string;
+    updatedAt: number;
+    source: string;
+    cwd: string | null;
+  } | null;
   botUsername: string | null;
   lastError: string | null;
 };
 
 type UiDict = {
   appSubtitleOnboarding: string;
-  appSubtitleAdvanced: string;
+  appSubtitleHome: string;
   statePrefix: string;
   stateOnline: string;
   statePartial: string;
   stateOffline: string;
-  statusNotChecked: string;
-  statusInstalledRunning: string;
-  statusInstalledStopped: string;
-  statusDisabled: string;
-  loadingInit: string;
-  loadingHealth: string;
-  loadingSaveBot: string;
-  loadingPairing: string;
-  loadingRepairPairing: string;
-  loadingEnableRemote: string;
-  loadingDisableRemote: string;
-  loadingEnableAutostart: string;
-  loadingDisableAutostart: string;
-  loadingDoneAutoHide: string;
-  errNetwork: string;
-  errBotNotReady: string;
-  progressTitle: string;
+  homeTitle: string;
+  homeSubtitle: string;
+  sectionCurrent: string;
+  sectionSettings: string;
+  sectionLogs: string;
+  checkCodex: string;
+  checkRelay: string;
+  checkPhone: string;
+  checkThread: string;
+  checkOk: string;
+  checkBad: string;
+  remoteSwitchTitle: string;
+  remoteSwitchDesc: string;
+  repairPhoneAction: string;
+  refreshNow: string;
+  currentThreadTitle: string;
+  noThreadBound: string;
+  threadId: string;
+  threadSource: string;
+  threadUpdatedAt: string;
+  threadUnknownTime: string;
+  autoStartTitle: string;
+  autoStartDesc: string;
+  botConfigTitle: string;
+  botConfigDesc: string;
+  currentBotLabel: string;
+  botTokenRequired: string;
+  botUsernameOptional: string;
+  saveApply: string;
+  hide: string;
+  show: string;
+  logFileLabel: string;
+  logLinesLabel: string;
+  logRefresh: string;
+  copyLog: string;
+  openLogDir: string;
+  openIssues: string;
+  logsEmpty: string;
+  copied: string;
+  saved: string;
+  botGuideTitle: string;
+  botGuideClose: string;
+  botGuideOpenFather: string;
+  botGuideDone: string;
+  botGuideSteps: string[];
+  language: string;
+  langZh: string;
+  langEn: string;
   step1Label: string;
   step2Label: string;
   step3Label: string;
+  step4Label: string;
+  progressTitle: string;
   step1Title: string;
   step1Desc: string;
   step1Run: string;
   step1Rerun: string;
-  refreshStatus: string;
   step1Ok: string;
   step2Title: string;
-  step2HelpTitle: string;
   step2Desc: string;
-  botTokenRequired: string;
-  botUsernameOptional: string;
-  hide: string;
-  show: string;
-  save: string;
-  currentBotConfigured: string;
-  currentBotNotConfigured: string;
+  step2HelpTitle: string;
+  step2Configured: string;
+  step2NotConfigured: string;
   step3Title: string;
   step3Desc: string;
   startPairing: string;
@@ -106,172 +147,207 @@ type UiDict = {
   pairingStatus: string;
   expiresAt: string;
   pending: string;
+  step4Title: string;
+  step4Desc: string;
+  step4Refresh: string;
   doneTitle: string;
   doneDesc: string;
-  remoteStatusTitle: string;
-  remoteSwitchTitle: string;
-  remoteSwitchDesc: string;
-  remoteReady: string;
-  remotePartialHint: string;
-  remoteOfflineHint: string;
-  repairPhoneHint: string;
-  repairPhoneAction: string;
-  autostartTitle: string;
-  autostartSwitchTitle: string;
-  autostartSwitchDesc: string;
-  refresh: string;
-  botConfigTitle: string;
-  botConfigDesc: string;
-  currentBot: string;
+  actionRunHealth: string;
+  actionSaveBot: string;
+  actionPairing: string;
+  actionRepair: string;
+  actionToggleRemoteOn: string;
+  actionToggleRemoteOff: string;
+  actionAutoStartOn: string;
+  actionAutoStartOff: string;
+  actionSetLocale: string;
+  actionLoadLogs: string;
+  errNetwork: string;
+  errBotNotReady: string;
   unknownBot: string;
-  changeBotHint: string;
-  changeBotAction: string;
-  saveApply: string;
-  cancel: string;
-  botGuideTitle: string;
-  botGuideClose: string;
-  botGuideOpenFather: string;
-  botGuideDone: string;
-  botGuideSteps: string[];
-  language: string;
-  langZh: string;
-  langEn: string;
 };
 
 const UI: Record<Locale, UiDict> = {
   zh: {
     appSubtitleOnboarding: '首次配置向导（约 2-3 分钟）',
-    appSubtitleAdvanced: '高级配置',
+    appSubtitleHome: '应用主页',
     statePrefix: '状态',
     stateOnline: '在线',
     statePartial: '部分可用',
     stateOffline: '离线',
-    statusNotChecked: '未检测',
-    statusInstalledRunning: '已启用并运行',
-    statusInstalledStopped: '已安装，未运行',
-    statusDisabled: '未启用',
-    loadingInit: '加载中...',
-    loadingHealth: '正在检测 Codex 环境...',
-    loadingSaveBot: '正在保存机器人配置...',
-    loadingPairing: '正在创建手机配对...',
-    loadingRepairPairing: '正在准备重新配对...',
-    loadingEnableRemote: '正在恢复远程能力...',
-    loadingDisableRemote: '正在暂停远程能力...',
-    loadingEnableAutostart: '正在启用开机自启...',
-    loadingDisableAutostart: '正在关闭开机自启...',
-    loadingDoneAutoHide: '✅ 配置已就绪，将切换到菜单栏使用...',
-    errNetwork: '网络连接暂不可用，请稍后重试。',
-    errBotNotReady: 'Telegram 机器人尚未就绪，请先确认 Token 配置正确。',
-    progressTitle: '配置进度',
-    step1Label: '步骤 1：环境检测',
-    step2Label: '步骤 2：配置机器人',
-    step3Label: '步骤 3：手机配对',
-    step1Title: '步骤 1：环境检测',
-    step1Desc: '点击检测，确认本机 Codex 环境可用。',
-    step1Run: '开始检测',
-    step1Rerun: '重新检测',
-    refreshStatus: '刷新状态',
-    step1Ok: '✅ 环境可用',
-    step2Title: '步骤 2：配置 Telegram 机器人',
-    step2HelpTitle: '查看机器人配置教学',
-    step2Desc: '填入 Bot Token 并保存，系统会自动进入下一步。',
+    homeTitle: '当前状态',
+    homeSubtitle: '一眼查看是否在线、链路是否完整、当前绑定线程。',
+    sectionCurrent: '当前状态',
+    sectionSettings: '高级设置',
+    sectionLogs: '日志与反馈',
+    checkCodex: 'Codex 环境',
+    checkRelay: '远程服务',
+    checkPhone: '手机配对',
+    checkThread: '线程绑定',
+    checkOk: '正常',
+    checkBad: '异常',
+    remoteSwitchTitle: '远程开关',
+    remoteSwitchDesc: '开启后，手机消息会转发到 Codex；关闭后暂停远程能力。',
+    repairPhoneAction: '重新配对',
+    refreshNow: '刷新',
+    currentThreadTitle: '当前线程',
+    noThreadBound: '当前尚未绑定线程，请在 Telegram 发送 /threads 并绑定。',
+    threadId: 'ID',
+    threadSource: '来源',
+    threadUpdatedAt: '更新时间',
+    threadUnknownTime: '未知',
+    autoStartTitle: '开机自启',
+    autoStartDesc: '电脑重启后自动恢复能力。',
+    botConfigTitle: '机器人配置',
+    botConfigDesc: '仅在你更换 Telegram Bot 时需要修改。',
+    currentBotLabel: '当前机器人',
     botTokenRequired: 'Bot Token（必填）',
     botUsernameOptional: 'Bot 用户名（可选）',
+    saveApply: '保存并应用',
     hide: '隐藏',
     show: '显示',
-    save: '保存',
-    currentBotConfigured: '当前：机器人已配置。',
-    currentBotNotConfigured: '当前：机器人未配置。',
+    logFileLabel: '日志文件',
+    logLinesLabel: '显示行数',
+    logRefresh: '加载日志',
+    copyLog: '复制日志',
+    openLogDir: '打开日志目录',
+    openIssues: '反馈问题（GitHub）',
+    logsEmpty: '暂无日志输出。',
+    copied: '已复制',
+    saved: '已保存',
+    botGuideTitle: '如何创建 Telegram 机器人',
+    botGuideClose: '关闭',
+    botGuideOpenFather: '打开 BotFather',
+    botGuideDone: '我知道了',
+    botGuideSteps: [
+      '打开 Telegram，搜索并进入 @BotFather。',
+      '发送 /newbot，按提示创建机器人。',
+      '复制返回的 Token（例如 123456:ABC...）。',
+      '回到此页面粘贴 Token，点击“保存并应用”。',
+    ],
+    language: '语言',
+    langZh: '中文',
+    langEn: 'English',
+    step1Label: '1. 环境检测',
+    step2Label: '2. 配置机器人',
+    step3Label: '3. 手机配对',
+    step4Label: '4. 绑定线程',
+    progressTitle: '配置进度',
+    step1Title: '步骤 1：环境检测',
+    step1Desc: '确认本机 Codex 可用。',
+    step1Run: '开始检测',
+    step1Rerun: '重新检测',
+    step1Ok: '✅ 环境可用',
+    step2Title: '步骤 2：配置 Telegram 机器人',
+    step2Desc: '填写 Bot Token 并保存。',
+    step2HelpTitle: '查看机器人配置教学',
+    step2Configured: '机器人已配置。',
+    step2NotConfigured: '机器人未配置。',
     step3Title: '步骤 3：手机配对',
-    step3Desc: '扫码配对后，点击“刷新配对状态”；确认成功后会自动完成配置。',
+    step3Desc: '扫码或打开 Telegram 配对链接，完成后刷新状态。',
     startPairing: '开始配对',
     regenerateQr: '重新生成二维码',
     refreshPairingStatus: '刷新配对状态',
     openTelegramPairing: '打开 Telegram 配对',
     pairingStatus: '配对状态',
     expiresAt: '过期时间',
-    pending: 'pending',
+    pending: '等待中',
+    step4Title: '步骤 4：绑定线程',
+    step4Desc: '在 Telegram 中发送 /threads 并绑定一个线程，然后点“我已完成，刷新”。',
+    step4Refresh: '我已完成，刷新',
     doneTitle: '配置完成',
-    doneDesc: '已就绪，正在切换到菜单栏模式…',
-    remoteStatusTitle: '远程状态',
-    remoteSwitchTitle: '远程开关',
-    remoteSwitchDesc: '开启后手机可发消息远程操作，关闭后会暂停远程能力。',
-    remoteReady: '手机端可以直接发送消息远程操作 Codex。',
-    remotePartialHint: '基础配置已完成一部分，建议先点击“重新配对”后再试。',
-    remoteOfflineHint: '当前不可用，请先完成配置并恢复远程能力。',
-    repairPhoneHint: '“重新配对手机”只会重建手机绑定关系，不会更换机器人。',
-    repairPhoneAction: '重新配对手机',
-    autostartTitle: '开机自启（Agent）',
-    autostartSwitchTitle: '开机自启',
-    autostartSwitchDesc: '开启后电脑重启会自动恢复远程能力。',
-    refresh: '刷新',
-    botConfigTitle: '机器人配置（高级）',
-    botConfigDesc: '仅在你要更换 Telegram 机器人账号时才需要修改。',
-    currentBot: '当前机器人',
+    doneDesc: '已就绪，将自动隐藏到菜单栏。',
+    actionRunHealth: '正在检测 Codex 环境...',
+    actionSaveBot: '正在保存机器人配置...',
+    actionPairing: '正在创建配对...',
+    actionRepair: '正在重建手机配对...',
+    actionToggleRemoteOn: '正在开启远程...',
+    actionToggleRemoteOff: '正在关闭远程...',
+    actionAutoStartOn: '正在启用开机自启...',
+    actionAutoStartOff: '正在关闭开机自启...',
+    actionSetLocale: '正在切换语言...',
+    actionLoadLogs: '正在读取日志...',
+    errNetwork: '网络连接暂不可用，请稍后重试。',
+    errBotNotReady: 'Telegram 机器人尚未就绪，请先检查 Token。',
     unknownBot: '未识别',
-    changeBotHint: '“更换机器人”会替换 Token；通常不需要频繁操作。',
-    changeBotAction: '更换机器人',
-    saveApply: '保存并应用',
-    cancel: '取消',
-    botGuideTitle: '如何创建 Telegram 机器人',
-    botGuideClose: '关闭',
-    botGuideOpenFather: '打开 BotFather',
-    botGuideDone: '我知道了',
-    botGuideSteps: [
-      '打开 Telegram 搜索并进入 @BotFather。',
-      '发送 /newbot，按提示创建机器人。',
-      '复制返回的 Token（如 123456:ABC...）。',
-      '回到本页粘贴 Token，点击“保存”。',
-    ],
-    language: '语言',
-    langZh: '中文',
-    langEn: 'English',
   },
   en: {
     appSubtitleOnboarding: 'First-time setup wizard (about 2-3 min)',
-    appSubtitleAdvanced: 'Advanced settings',
+    appSubtitleHome: 'App Home',
     statePrefix: 'Status',
     stateOnline: 'Online',
     statePartial: 'Partially ready',
     stateOffline: 'Offline',
-    statusNotChecked: 'Not checked',
-    statusInstalledRunning: 'Installed and running',
-    statusInstalledStopped: 'Installed, not running',
-    statusDisabled: 'Disabled',
-    loadingInit: 'Loading...',
-    loadingHealth: 'Checking Codex environment...',
-    loadingSaveBot: 'Saving bot configuration...',
-    loadingPairing: 'Creating mobile pairing...',
-    loadingRepairPairing: 'Preparing re-pairing...',
-    loadingEnableRemote: 'Resuming remote access...',
-    loadingDisableRemote: 'Pausing remote access...',
-    loadingEnableAutostart: 'Enabling auto-start...',
-    loadingDisableAutostart: 'Disabling auto-start...',
-    loadingDoneAutoHide: '✅ Setup complete, switching to menu bar mode...',
-    errNetwork: 'Network is temporarily unavailable. Please try again later.',
-    errBotNotReady: 'Telegram bot is not ready yet. Please check your token.',
-    progressTitle: 'Setup progress',
-    step1Label: 'Step 1: Environment check',
-    step2Label: 'Step 2: Configure bot',
-    step3Label: 'Step 3: Phone pairing',
-    step1Title: 'Step 1: Environment check',
-    step1Desc: 'Run checks to confirm Codex is available on this Mac.',
-    step1Run: 'Run checks',
-    step1Rerun: 'Run again',
-    refreshStatus: 'Refresh status',
-    step1Ok: '✅ Environment is ready',
-    step2Title: 'Step 2: Configure Telegram bot',
-    step2HelpTitle: 'Open bot setup guide',
-    step2Desc: 'Paste Bot Token and save. The wizard will move to the next step automatically.',
+    homeTitle: 'Current status',
+    homeSubtitle: 'Quick view of online state, pipeline health, and active thread.',
+    sectionCurrent: 'Current Status',
+    sectionSettings: 'Advanced Settings',
+    sectionLogs: 'Logs & Feedback',
+    checkCodex: 'Codex environment',
+    checkRelay: 'Remote service',
+    checkPhone: 'Phone paired',
+    checkThread: 'Thread bound',
+    checkOk: 'OK',
+    checkBad: 'Issue',
+    remoteSwitchTitle: 'Remote switch',
+    remoteSwitchDesc: 'When enabled, phone messages are routed to Codex. Disable to pause remote access.',
+    repairPhoneAction: 'Repair pairing',
+    refreshNow: 'Refresh',
+    currentThreadTitle: 'Current thread',
+    noThreadBound: 'No thread is bound yet. Use /threads in Telegram and bind one.',
+    threadId: 'ID',
+    threadSource: 'Source',
+    threadUpdatedAt: 'Updated',
+    threadUnknownTime: 'Unknown',
+    autoStartTitle: 'Auto-start',
+    autoStartDesc: 'Restore capability automatically after reboot.',
+    botConfigTitle: 'Bot configuration',
+    botConfigDesc: 'Only update this when switching Telegram bot account.',
+    currentBotLabel: 'Current bot',
     botTokenRequired: 'Bot Token (required)',
     botUsernameOptional: 'Bot username (optional)',
+    saveApply: 'Save and apply',
     hide: 'Hide',
     show: 'Show',
-    save: 'Save',
-    currentBotConfigured: 'Current: bot configured.',
-    currentBotNotConfigured: 'Current: bot not configured.',
-    step3Title: 'Step 3: Phone pairing',
-    step3Desc: 'Scan QR, then click "Refresh pairing status". The setup completes automatically after confirmation.',
+    logFileLabel: 'Log file',
+    logLinesLabel: 'Lines',
+    logRefresh: 'Load logs',
+    copyLog: 'Copy logs',
+    openLogDir: 'Open logs folder',
+    openIssues: 'Report issue (GitHub)',
+    logsEmpty: 'No log output yet.',
+    copied: 'Copied',
+    saved: 'Saved',
+    botGuideTitle: 'How to create a Telegram bot',
+    botGuideClose: 'Close',
+    botGuideOpenFather: 'Open BotFather',
+    botGuideDone: 'Got it',
+    botGuideSteps: [
+      'Open Telegram and search for @BotFather.',
+      'Send /newbot and follow the prompts.',
+      'Copy the returned token (for example 123456:ABC...).',
+      'Paste token here and click "Save and apply".',
+    ],
+    language: 'Language',
+    langZh: '中文',
+    langEn: 'English',
+    step1Label: '1. Environment check',
+    step2Label: '2. Configure bot',
+    step3Label: '3. Pair phone',
+    step4Label: '4. Bind thread',
+    progressTitle: 'Setup progress',
+    step1Title: 'Step 1: Environment check',
+    step1Desc: 'Confirm Codex is available on this Mac.',
+    step1Run: 'Run checks',
+    step1Rerun: 'Run again',
+    step1Ok: '✅ Environment is ready',
+    step2Title: 'Step 2: Configure Telegram bot',
+    step2Desc: 'Fill in Bot Token and save.',
+    step2HelpTitle: 'Open bot setup guide',
+    step2Configured: 'Bot configured.',
+    step2NotConfigured: 'Bot not configured.',
+    step3Title: 'Step 3: Pair your phone',
+    step3Desc: 'Scan QR or open Telegram pairing link, then refresh status.',
     startPairing: 'Start pairing',
     regenerateQr: 'Regenerate QR',
     refreshPairingStatus: 'Refresh pairing status',
@@ -279,41 +355,24 @@ const UI: Record<Locale, UiDict> = {
     pairingStatus: 'Pairing status',
     expiresAt: 'Expires at',
     pending: 'pending',
+    step4Title: 'Step 4: Bind a thread',
+    step4Desc: 'Send /threads in Telegram, bind one thread, then click refresh.',
+    step4Refresh: 'Done, refresh',
     doneTitle: 'Setup completed',
-    doneDesc: 'Ready now. Switching to menu bar mode…',
-    remoteStatusTitle: 'Remote status',
-    remoteSwitchTitle: 'Remote switch',
-    remoteSwitchDesc: 'When enabled, you can control Codex from your phone. Disable it to pause remote access.',
-    remoteReady: 'Your phone can now send messages to control Codex remotely.',
-    remotePartialHint: 'Setup is partially complete. Try "Repair phone pairing".',
-    remoteOfflineHint: 'Remote is unavailable. Complete setup and turn remote back on.',
-    repairPhoneHint: '"Repair phone pairing" only rebuilds phone binding and does not change bot account.',
-    repairPhoneAction: 'Repair phone pairing',
-    autostartTitle: 'Auto-start (Agent)',
-    autostartSwitchTitle: 'Auto-start',
-    autostartSwitchDesc: 'When enabled, remote access is restored automatically after reboot.',
-    refresh: 'Refresh',
-    botConfigTitle: 'Bot settings (advanced)',
-    botConfigDesc: 'Only update this when you want to switch to another Telegram bot account.',
-    currentBot: 'Current bot',
+    doneDesc: 'Ready. Window will hide to menu bar.',
+    actionRunHealth: 'Checking Codex environment...',
+    actionSaveBot: 'Saving bot configuration...',
+    actionPairing: 'Creating pairing session...',
+    actionRepair: 'Repairing phone pairing...',
+    actionToggleRemoteOn: 'Turning remote on...',
+    actionToggleRemoteOff: 'Turning remote off...',
+    actionAutoStartOn: 'Enabling auto-start...',
+    actionAutoStartOff: 'Disabling auto-start...',
+    actionSetLocale: 'Switching language...',
+    actionLoadLogs: 'Loading logs...',
+    errNetwork: 'Network is temporarily unavailable. Please try again later.',
+    errBotNotReady: 'Telegram bot is not ready yet. Please check your token.',
     unknownBot: 'Unknown',
-    changeBotHint: '"Change bot" replaces the token. This is usually infrequent.',
-    changeBotAction: 'Change bot',
-    saveApply: 'Save and apply',
-    cancel: 'Cancel',
-    botGuideTitle: 'How to create a Telegram bot',
-    botGuideClose: 'Close',
-    botGuideOpenFather: 'Open BotFather',
-    botGuideDone: 'Got it',
-    botGuideSteps: [
-      'Open Telegram and search for @BotFather.',
-      'Send /newbot and follow instructions.',
-      'Copy the returned token (for example: 123456:ABC...).',
-      'Come back here, paste token, and click Save.',
-    ],
-    language: 'Language',
-    langZh: '中文',
-    langEn: 'English',
   },
 };
 
@@ -324,30 +383,13 @@ function getTexts(locale: Locale): UiDict {
 function toFriendlyError(error: unknown, locale: Locale): string {
   const text = error instanceof Error ? error.message : String(error);
   const ui = getTexts(locale);
-  if (/fetch failed/i.test(text)) {
+  if (/fetch failed|aborted/i.test(text)) {
     return ui.errNetwork;
   }
   if (/telegram relay bot not ready/i.test(text)) {
     return ui.errBotNotReady;
   }
   return text;
-}
-
-function describeAgentService(state: ServiceState | null, locale: Locale): string {
-  const ui = getTexts(locale);
-  if (!state) {
-    return ui.statusNotChecked;
-  }
-  if (state.running) {
-    return ui.statusInstalledRunning;
-  }
-  if (state.installed) {
-    return ui.statusInstalledStopped;
-  }
-  if (/Could not find service/i.test(state.raw || '')) {
-    return ui.statusDisabled;
-  }
-  return ui.statusDisabled;
 }
 
 function describeRemoteState(state: RemoteState | undefined, locale: Locale): string {
@@ -361,6 +403,14 @@ function describeRemoteState(state: RemoteState | undefined, locale: Locale): st
   return ui.stateOffline;
 }
 
+function formatTime(epochMs: number, locale: Locale): string {
+  if (!epochMs || Number.isNaN(epochMs)) {
+    return getTexts(locale).threadUnknownTime;
+  }
+  const localeTag = locale === 'en' ? 'en-US' : 'zh-CN';
+  return new Date(epochMs).toLocaleString(localeTag);
+}
+
 function formatExpireTime(epochMs: number, locale: Locale): string {
   if (!epochMs || Number.isNaN(epochMs)) {
     return '-';
@@ -368,6 +418,28 @@ function formatExpireTime(epochMs: number, locale: Locale): string {
   const localeTag = locale === 'en' ? 'en-US' : 'zh-CN';
   return new Date(epochMs).toLocaleString(localeTag);
 }
+
+type BusyState = {
+  health: boolean;
+  saveBot: boolean;
+  pairing: boolean;
+  repairPairing: boolean;
+  toggleRemote: boolean;
+  autoStart: boolean;
+  locale: boolean;
+  logs: boolean;
+};
+
+const EMPTY_BUSY: BusyState = {
+  health: false,
+  saveBot: false,
+  pairing: false,
+  repairPairing: false,
+  toggleRemote: false,
+  autoStart: false,
+  locale: false,
+  logs: false,
+};
 
 export function App() {
   const [windowMode, setWindowMode] = useState<WindowMode>('onboarding');
@@ -385,12 +457,16 @@ export function App() {
   });
   const [showBotToken, setShowBotToken] = useState(false);
   const [showBotGuide, setShowBotGuide] = useState(false);
-  const [showBotConfigEditor, setShowBotConfigEditor] = useState(false);
 
   const [agentService, setAgentService] = useState<ServiceState | null>(null);
-
-  const [loading, setLoading] = useState('');
+  const [busy, setBusy] = useState<BusyState>(EMPTY_BUSY);
+  const [booting, setBooting] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const [selectedLogFile, setSelectedLogFile] = useState<LogFile>('agent.log');
+  const [logLines, setLogLines] = useState(120);
+  const [logContent, setLogContent] = useState('');
 
   const phoneSectionRef = useRef<HTMLDivElement | null>(null);
   const autostartSectionRef = useRef<HTMLDivElement | null>(null);
@@ -400,17 +476,34 @@ export function App() {
   const locale: Locale = snapshot?.locale || 'zh';
   const ui = useMemo(() => getTexts(locale), [locale]);
 
-  const stepLabels = useMemo(() => [ui.step1Label, ui.step2Label, ui.step3Label], [ui]);
+  const onboardingSteps = useMemo(
+    () => [ui.step1Label, ui.step2Label, ui.step3Label, ui.step4Label],
+    [ui.step1Label, ui.step2Label, ui.step3Label, ui.step4Label],
+  );
+
   const onboardingStep = snapshot?.onboardingStep || 1;
-  const onboardingUiStep = onboardingStep >= 5 ? stepLabels.length : Math.min(onboardingStep, stepLabels.length);
-  const progressPercent = Math.round((onboardingUiStep / stepLabels.length) * 100);
+  const onboardingUiStep = onboardingStep >= 5 ? onboardingSteps.length : Math.min(onboardingStep, onboardingSteps.length);
+  const progressPercent = Math.round((onboardingUiStep / onboardingSteps.length) * 100);
+
   const remoteState = snapshot?.remoteState ?? 'offline';
   const remoteStateText = describeRemoteState(remoteState, locale);
   const remoteStateClass = remoteState === 'online' ? 'ok' : remoteState === 'partial' ? 'warn' : 'danger';
   const remoteEnabled = Boolean(snapshot?.relayRunning);
   const autoStartEnabled = Boolean(agentService?.installed);
 
-  const agentServiceText = useMemo(() => describeAgentService(agentService, locale), [agentService, locale]);
+  function setBusyFlag(key: keyof BusyState, value: boolean): void {
+    setBusy((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setNoticeWithAutoClear(text: string): void {
+    setNotice(text);
+    if (!text) {
+      return;
+    }
+    setTimeout(() => {
+      setNotice((current) => (current === text ? '' : current));
+    }, 2500);
+  }
 
   async function refreshSnapshot() {
     const next = await window.desktopApi.getAppSnapshot();
@@ -431,8 +524,20 @@ export function App() {
     setAgentService(agent);
   }
 
+  async function refreshLogs() {
+    setBusyFlag('logs', true);
+    try {
+      const tail = await window.desktopApi.getLogsTail(selectedLogFile, logLines);
+      setLogContent(tail || '');
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
+    } finally {
+      setBusyFlag('logs', false);
+    }
+  }
+
   async function initializePage() {
-    setLoading(ui.loadingInit);
+    setBooting(true);
     setError('');
     try {
       const modePayload = await window.desktopApi.getWindowMode();
@@ -440,21 +545,18 @@ export function App() {
         setWindowMode(modePayload.mode);
       }
       setFocusSection(modePayload?.focusSection || null);
-
-      await Promise.all([
-        refreshSnapshot(),
-        refreshRelaySettings(),
-        refreshServices(),
-      ]);
+      await Promise.all([refreshSnapshot(), refreshRelaySettings(), refreshServices()]);
+      const tail = await window.desktopApi.getLogsTail('agent.log', 120);
+      setLogContent(tail || '');
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
     } finally {
-      setLoading('');
+      setBooting(false);
     }
   }
 
   async function runHealth() {
-    setLoading(ui.loadingHealth);
+    setBusyFlag('health', true);
     setError('');
     try {
       const report = await window.desktopApi.getHealth();
@@ -463,12 +565,12 @@ export function App() {
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
     } finally {
-      setLoading('');
+      setBusyFlag('health', false);
     }
   }
 
   async function saveRelaySettings() {
-    setLoading(ui.loadingSaveBot);
+    setBusyFlag('saveBot', true);
     setError('');
     try {
       const next = await window.desktopApi.setRelaySettings({
@@ -479,19 +581,17 @@ export function App() {
         telegramBotToken: typeof next?.telegramBotToken === 'string' ? next.telegramBotToken : '',
         relayBotUsername: typeof next?.relayBotUsername === 'string' ? next.relayBotUsername : '',
       });
-      const [, updatedSnapshot] = await Promise.all([refreshServices(), refreshSnapshot()]);
-      if (windowMode === 'advanced' && updatedSnapshot?.botConfigured) {
-        setShowBotConfigEditor(false);
-      }
+      await Promise.all([refreshSnapshot(), refreshServices()]);
+      setNoticeWithAutoClear(ui.saved);
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
     } finally {
-      setLoading('');
+      setBusyFlag('saveBot', false);
     }
   }
 
   async function startPairing() {
-    setLoading(ui.loadingPairing);
+    setBusyFlag('pairing', true);
     setError('');
     try {
       const session = await window.desktopApi.startPairing();
@@ -507,7 +607,7 @@ export function App() {
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
     } finally {
-      setLoading('');
+      setBusyFlag('pairing', false);
     }
   }
 
@@ -525,7 +625,7 @@ export function App() {
   }
 
   async function restartPairingFlow() {
-    setLoading(ui.loadingRepairPairing);
+    setBusyFlag('repairPairing', true);
     setError('');
     try {
       await window.desktopApi.clearPairing();
@@ -539,75 +639,80 @@ export function App() {
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
     } finally {
-      setLoading('');
+      setBusyFlag('repairPairing', false);
     }
   }
 
   async function setRemoteEnabled(shouldEnable: boolean) {
-    setLoading(shouldEnable ? ui.loadingEnableRemote : ui.loadingDisableRemote);
+    setBusyFlag('toggleRemote', true);
     setError('');
+    setSnapshot((prev) => (prev ? { ...prev, relayRunning: shouldEnable } : prev));
     try {
       await window.desktopApi.toggleRelay(shouldEnable);
-      await refreshAll();
+      await refreshSnapshot();
+      setTimeout(() => {
+        void refreshSnapshot().catch(() => undefined);
+      }, 1200);
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
     } finally {
-      setLoading('');
-    }
-  }
-
-  async function enableAutoStart() {
-    setLoading(ui.loadingEnableAutostart);
-    setError('');
-    try {
-      await window.desktopApi.serviceControl('install');
-      await window.desktopApi.serviceControl('start');
-      await refreshServices();
-    } catch (e: unknown) {
-      setError(toFriendlyError(e, locale));
-    } finally {
-      setLoading('');
-    }
-  }
-
-  async function disableAutoStart() {
-    setLoading(ui.loadingDisableAutostart);
-    setError('');
-    try {
-      await window.desktopApi.serviceControl('uninstall');
-      await refreshServices();
-    } catch (e: unknown) {
-      setError(toFriendlyError(e, locale));
-    } finally {
-      setLoading('');
+      setBusyFlag('toggleRemote', false);
     }
   }
 
   async function setAutoStartEnabled(shouldEnable: boolean) {
-    if (shouldEnable) {
-      await enableAutoStart();
-      return;
+    setBusyFlag('autoStart', true);
+    setError('');
+    try {
+      if (shouldEnable) {
+        await window.desktopApi.serviceControl('install');
+        await window.desktopApi.serviceControl('start');
+      } else {
+        await window.desktopApi.serviceControl('uninstall');
+      }
+      await refreshServices();
+    } catch (e: unknown) {
+      setError(toFriendlyError(e, locale));
+    } finally {
+      setBusyFlag('autoStart', false);
     }
-    await disableAutoStart();
   }
 
   async function setLocale(nextLocale: Locale) {
     if (nextLocale === locale) {
       return;
     }
+    setBusyFlag('locale', true);
     setError('');
     try {
       await window.desktopApi.setLocale(nextLocale);
-      await refreshAll();
+      await refreshSnapshot();
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
+    } finally {
+      setBusyFlag('locale', false);
     }
   }
 
-  async function refreshAll() {
-    setError('');
+  async function copyLogs() {
     try {
-      await Promise.all([refreshSnapshot(), refreshServices(), refreshRelaySettings()]);
+      await navigator.clipboard.writeText(logContent || '');
+      setNoticeWithAutoClear(ui.copied);
+    } catch {
+      setError('Copy failed');
+    }
+  }
+
+  async function openLogsDir() {
+    const errorMessage = await window.desktopApi.openLogsDir();
+    if (errorMessage) {
+      setError(errorMessage);
+    }
+  }
+
+  async function openIssues() {
+    try {
+      await window.desktopApi.openFeedbackIssues();
     } catch (e: unknown) {
       setError(toFriendlyError(e, locale));
     }
@@ -628,7 +733,7 @@ export function App() {
   useEffect(() => {
     const timer = setInterval(() => {
       void refreshSnapshot().catch(() => undefined);
-    }, 4000);
+    }, 3000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -666,35 +771,47 @@ export function App() {
       autoHideTriggeredRef.current = false;
       return;
     }
-
     if (onboardingStep < 5) {
       autoHideTriggeredRef.current = false;
       return;
     }
-
     if (autoHideTriggeredRef.current) {
       return;
     }
-
     autoHideTriggeredRef.current = true;
-    setLoading(ui.loadingDoneAutoHide);
     const timer = setTimeout(() => {
       void window.desktopApi.setWindowMode('advanced');
       void window.desktopApi.hideWindow();
-      setLoading('');
-    }, 2500);
+    }, 2200);
     return () => clearTimeout(timer);
-  }, [windowMode, onboardingStep, ui.loadingDoneAutoHide]);
+  }, [windowMode, onboardingStep]);
 
-  const currentStepPanel = () => {
+  useEffect(() => {
+    void refreshLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLogFile, logLines]);
+
+  const operationText = useMemo(() => {
+    if (busy.health) return ui.actionRunHealth;
+    if (busy.saveBot) return ui.actionSaveBot;
+    if (busy.pairing) return ui.actionPairing;
+    if (busy.repairPairing) return ui.actionRepair;
+    if (busy.toggleRemote) return remoteEnabled ? ui.actionToggleRemoteOn : ui.actionToggleRemoteOff;
+    if (busy.autoStart) return autoStartEnabled ? ui.actionAutoStartOn : ui.actionAutoStartOff;
+    if (busy.locale) return ui.actionSetLocale;
+    if (busy.logs) return ui.actionLoadLogs;
+    return '';
+  }, [busy, ui, remoteEnabled, autoStartEnabled]);
+
+  function renderOnboardingStepPanel() {
     if (onboardingStep === 1) {
       return (
         <div className="panel-card">
           <h3>{ui.step1Title}</h3>
           <p className="muted">{ui.step1Desc}</p>
           <div className="actions">
-            <button onClick={() => void runHealth()}>{health ? ui.step1Rerun : ui.step1Run}</button>
-            <button onClick={() => void refreshSnapshot()}>{ui.refreshStatus}</button>
+            <button onClick={() => void runHealth()} disabled={busy.health}>{health ? ui.step1Rerun : ui.step1Run}</button>
+            <button onClick={() => void refreshSnapshot()}>{ui.refreshNow}</button>
           </div>
           {health && (
             <div className="light-box">
@@ -740,10 +857,10 @@ export function App() {
             />
           </div>
           <div className="actions">
-            <button onClick={() => void saveRelaySettings()}>{ui.save}</button>
-            <button onClick={() => void refreshAll()}>{ui.refreshStatus}</button>
+            <button onClick={() => void saveRelaySettings()} disabled={busy.saveBot}>{ui.saveApply}</button>
+            <button onClick={() => void refreshSnapshot()}>{ui.refreshNow}</button>
           </div>
-          <p className="muted">{snapshot?.botConfigured ? ui.currentBotConfigured : ui.currentBotNotConfigured}</p>
+          <p className="muted">{snapshot?.botConfigured ? ui.step2Configured : ui.step2NotConfigured}</p>
         </div>
       );
     }
@@ -754,7 +871,7 @@ export function App() {
           <h3>{ui.step3Title}</h3>
           <p className="muted">{ui.step3Desc}</p>
           <div className="actions">
-            <button onClick={() => void startPairing()}>{pairing ? ui.regenerateQr : ui.startPairing}</button>
+            <button onClick={() => void startPairing()} disabled={busy.pairing}>{pairing ? ui.regenerateQr : ui.startPairing}</button>
             <button onClick={() => void checkPairingStatus()} disabled={!pairing}>{ui.refreshPairingStatus}</button>
           </div>
           {pairing && (
@@ -771,7 +888,31 @@ export function App() {
       );
     }
 
-    return <div className="panel-card"><h3>{ui.doneTitle}</h3><p className="muted">{ui.doneDesc}</p></div>;
+    if (onboardingStep === 4) {
+      return (
+        <div className="panel-card">
+          <h3>{ui.step4Title}</h3>
+          <p className="muted">{ui.step4Desc}</p>
+          <div className="actions">
+            <button onClick={() => void refreshSnapshot()}>{ui.step4Refresh}</button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="panel-card">
+        <h3>{ui.doneTitle}</h3>
+        <p className="muted">{ui.doneDesc}</p>
+      </div>
+    );
+  }
+
+  const checks = snapshot?.statusChecks || {
+    codexReady: false,
+    remoteServiceRunning: false,
+    phonePaired: false,
+    threadBound: false,
   };
 
   return (
@@ -779,33 +920,25 @@ export function App() {
       <header className="header">
         <div>
           <h1>Codex Bridge Desktop</h1>
-          <p>{windowMode === 'onboarding' ? ui.appSubtitleOnboarding : ui.appSubtitleAdvanced}</p>
+          <p>{windowMode === 'onboarding' ? ui.appSubtitleOnboarding : ui.appSubtitleHome}</p>
         </div>
         <div className="header-right">
           <div className="locale-switch" role="group" aria-label={ui.language}>
-            <button
-              type="button"
-              className={locale === 'zh' ? 'active' : ''}
-              onClick={() => void setLocale('zh')}
-            >
+            <button type="button" className={locale === 'zh' ? 'active' : ''} onClick={() => void setLocale('zh')}>
               {ui.langZh}
             </button>
-            <button
-              type="button"
-              className={locale === 'en' ? 'active' : ''}
-              onClick={() => void setLocale('en')}
-            >
+            <button type="button" className={locale === 'en' ? 'active' : ''} onClick={() => void setLocale('en')}>
               {ui.langEn}
             </button>
           </div>
-          <div className={`pill ${remoteStateClass}`}>
-            {ui.statePrefix}: {remoteStateText}
-          </div>
+          <div className={`pill ${remoteStateClass}`}>{ui.statePrefix}: {remoteStateText}</div>
         </div>
       </header>
 
       {!!error && <div className="banner error">{error}</div>}
-      {!!loading && <div className="banner info">{loading}</div>}
+      {!!notice && <div className="banner success">{notice}</div>}
+      {!!operationText && <div className="banner info">{operationText}</div>}
+      {booting && <div className="banner info">Loading...</div>}
 
       {windowMode === 'onboarding' ? (
         <main className="onboarding-layout">
@@ -815,9 +948,9 @@ export function App() {
               <div className="progress-value" style={{ width: `${progressPercent}%` }} />
             </div>
             <ol className="step-list">
-              {stepLabels.map((label, index) => {
+              {onboardingSteps.map((label, index) => {
                 const stepNo = index + 1;
-                const state = onboardingStep > stepNo ? 'done' : onboardingStep === stepNo ? 'current' : 'todo';
+                const state = onboardingUiStep > stepNo ? 'done' : onboardingUiStep === stepNo ? 'current' : 'todo';
                 return (
                   <li key={label} className={state}>
                     <span>{label}</span>
@@ -827,100 +960,150 @@ export function App() {
             </ol>
           </section>
 
-          <section className="card action-card">{currentStepPanel()}</section>
+          <section className="card action-card">{renderOnboardingStepPanel()}</section>
         </main>
       ) : (
-        <main className="advanced-layout">
-          <section className="card" ref={phoneSectionRef}>
-            <h2>{ui.remoteStatusTitle}</h2>
-            <p className="muted">{ui.statePrefix}: {remoteStateText}</p>
-            <div className="switch-row">
-              <div className="switch-text">
-                <strong>{ui.remoteSwitchTitle}</strong>
-                <p className="muted">{ui.remoteSwitchDesc}</p>
-              </div>
-              <label className="switch-toggle" aria-label={ui.remoteSwitchTitle}>
-                <input
-                  type="checkbox"
-                  checked={remoteEnabled}
-                  onChange={(event) => void setRemoteEnabled(event.target.checked)}
-                />
-                <span className="switch-slider" />
-              </label>
+        <main className="home-layout">
+          <section className="card status-card" ref={phoneSectionRef}>
+            <div className="card-head">
+              <h2>{ui.sectionCurrent}</h2>
+              <button onClick={() => void refreshSnapshot()}>{ui.refreshNow}</button>
             </div>
-            <p className="muted">
-              {remoteState === 'online'
-                ? ui.remoteReady
-                : remoteState === 'partial'
-                  ? ui.remotePartialHint
-                  : ui.remoteOfflineHint}
-            </p>
-            <p className="muted">{ui.repairPhoneHint}</p>
-            <div className="actions">
-              <button onClick={() => void restartPairingFlow()}>{ui.repairPhoneAction}</button>
-              <button onClick={() => void refreshAll()}>{ui.refreshStatus}</button>
+            <p className="muted">{ui.homeSubtitle}</p>
+
+            <div className="status-hero">
+              <div>
+                <p className="hero-label">{ui.homeTitle}</p>
+                <p className={`hero-state ${remoteStateClass}`}>{remoteStateText}</p>
+              </div>
+              <div className="hero-actions">
+                <label className="switch-toggle" aria-label={ui.remoteSwitchTitle}>
+                  <input
+                    type="checkbox"
+                    checked={remoteEnabled}
+                    onChange={(event) => void setRemoteEnabled(event.target.checked)}
+                    disabled={busy.toggleRemote}
+                  />
+                  <span className="switch-slider" />
+                </label>
+                <button onClick={() => void restartPairingFlow()} disabled={busy.repairPairing}>{ui.repairPhoneAction}</button>
+              </div>
+            </div>
+
+            <div className="check-grid">
+              <div className={`check-item ${checks.codexReady ? 'ok' : 'bad'}`}>
+                <span>{ui.checkCodex}</span>
+                <strong>{checks.codexReady ? ui.checkOk : ui.checkBad}</strong>
+              </div>
+              <div className={`check-item ${checks.remoteServiceRunning ? 'ok' : 'bad'}`}>
+                <span>{ui.checkRelay}</span>
+                <strong>{checks.remoteServiceRunning ? ui.checkOk : ui.checkBad}</strong>
+              </div>
+              <div className={`check-item ${checks.phonePaired ? 'ok' : 'bad'}`}>
+                <span>{ui.checkPhone}</span>
+                <strong>{checks.phonePaired ? ui.checkOk : ui.checkBad}</strong>
+              </div>
+              <div className={`check-item ${checks.threadBound ? 'ok' : 'bad'}`}>
+                <span>{ui.checkThread}</span>
+                <strong>{checks.threadBound ? ui.checkOk : ui.checkBad}</strong>
+              </div>
+            </div>
+
+            <div className="thread-box">
+              <h3>{ui.currentThreadTitle}</h3>
+              {snapshot?.currentThread ? (
+                <>
+                  <p className="thread-title">{snapshot.currentThread.title}</p>
+                  <p className="muted"><strong>{ui.threadId}:</strong> <code>{snapshot.currentThread.id}</code></p>
+                  <p className="muted"><strong>{ui.threadSource}:</strong> {snapshot.currentThread.source}</p>
+                  <p className="muted"><strong>{ui.threadUpdatedAt}:</strong> {formatTime(snapshot.currentThread.updatedAt, locale)}</p>
+                </>
+              ) : (
+                <p className="muted">{ui.noThreadBound}</p>
+              )}
             </div>
           </section>
 
-          <section className="card" ref={autostartSectionRef}>
-            <h2>{ui.autostartTitle}</h2>
-            <p className="muted">{ui.statePrefix}: {agentServiceText}</p>
-            <div className="switch-row">
-              <div className="switch-text">
-                <strong>{ui.autostartSwitchTitle}</strong>
-                <p className="muted">{ui.autostartSwitchDesc}</p>
-              </div>
-              <label className="switch-toggle" aria-label={ui.autostartSwitchTitle}>
+          <section className="card settings-card">
+            <div className="card-head">
+              <h2>{ui.sectionSettings}</h2>
+            </div>
+
+            <div className="settings-group" ref={autostartSectionRef}>
+              <h3>{ui.autoStartTitle}</h3>
+              <p className="muted">{ui.autoStartDesc}</p>
+              <label className="switch-toggle" aria-label={ui.autoStartTitle}>
                 <input
                   type="checkbox"
                   checked={autoStartEnabled}
                   onChange={(event) => void setAutoStartEnabled(event.target.checked)}
+                  disabled={busy.autoStart}
                 />
                 <span className="switch-slider" />
               </label>
             </div>
-            <div className="actions">
-              <button onClick={() => void refreshServices()}>{ui.refresh}</button>
+
+            <div className="settings-group" ref={botSectionRef}>
+              <div className="title-row">
+                <h3>{ui.botConfigTitle}</h3>
+                <button type="button" className="help-dot" title={ui.step2HelpTitle} onClick={() => setShowBotGuide(true)}>?</button>
+              </div>
+              <p className="muted">{ui.botConfigDesc}</p>
+              <p className="muted">{ui.currentBotLabel}: {snapshot?.botUsername ? `@${snapshot.botUsername}` : ui.unknownBot}</p>
+              <div className="input-row">
+                <input
+                  type={showBotToken ? 'text' : 'password'}
+                  value={relaySettings.telegramBotToken}
+                  placeholder={ui.botTokenRequired}
+                  onChange={(event) => setRelaySettings((prev) => ({ ...prev, telegramBotToken: event.target.value }))}
+                />
+                <button onClick={() => setShowBotToken((prev) => !prev)}>{showBotToken ? ui.hide : ui.show}</button>
+              </div>
+              <div className="input-row">
+                <input
+                  value={relaySettings.relayBotUsername}
+                  placeholder={ui.botUsernameOptional}
+                  onChange={(event) => setRelaySettings((prev) => ({ ...prev, relayBotUsername: event.target.value }))}
+                />
+              </div>
+              <div className="actions compact">
+                <button onClick={() => void saveRelaySettings()} disabled={busy.saveBot}>{ui.saveApply}</button>
+              </div>
             </div>
           </section>
 
-          <section className="card" ref={botSectionRef}>
-            <h2>{ui.botConfigTitle}</h2>
-            <p className="muted">{ui.botConfigDesc}</p>
-            <p className="muted">{ui.currentBot}: {snapshot?.botUsername ? `@${snapshot.botUsername}` : ui.unknownBot}</p>
-            <p className="muted">{ui.changeBotHint}</p>
+          <section className="card logs-card">
+            <div className="card-head">
+              <h2>{ui.sectionLogs}</h2>
+            </div>
 
-            {(snapshot?.botConfigured && !showBotConfigEditor) ? (
-              <div className="actions">
-                <button onClick={() => setShowBotConfigEditor(true)}>{ui.changeBotAction}</button>
-              </div>
-            ) : (
-              <>
-                <div className="input-row">
-                  <input
-                    type={showBotToken ? 'text' : 'password'}
-                    value={relaySettings.telegramBotToken}
-                    placeholder={ui.botTokenRequired}
-                    onChange={(event) => setRelaySettings((prev) => ({ ...prev, telegramBotToken: event.target.value }))}
-                  />
-                  <button onClick={() => setShowBotToken((prev) => !prev)}>{showBotToken ? ui.hide : ui.show}</button>
-                </div>
-                <div className="input-row">
-                  <input
-                    value={relaySettings.relayBotUsername}
-                    placeholder={ui.botUsernameOptional}
-                    onChange={(event) => setRelaySettings((prev) => ({ ...prev, relayBotUsername: event.target.value }))}
-                  />
-                </div>
-                <div className="actions">
-                  <button onClick={() => void saveRelaySettings()}>{ui.saveApply}</button>
-                  <button onClick={() => void refreshAll()}>{ui.refreshStatus}</button>
-                  {snapshot?.botConfigured && (
-                    <button onClick={() => setShowBotConfigEditor(false)}>{ui.cancel}</button>
-                  )}
-                </div>
-              </>
-            )}
+            <div className="log-controls">
+              <label>
+                <span>{ui.logFileLabel}</span>
+                <select value={selectedLogFile} onChange={(e) => setSelectedLogFile(e.target.value as LogFile)}>
+                  <option value="agent.log">agent.log</option>
+                  <option value="relay.log">relay.log</option>
+                </select>
+              </label>
+              <label>
+                <span>{ui.logLinesLabel}</span>
+                <select value={logLines} onChange={(e) => setLogLines(Number(e.target.value))}>
+                  <option value={80}>80</option>
+                  <option value={120}>120</option>
+                  <option value={200}>200</option>
+                  <option value={400}>400</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="actions">
+              <button onClick={() => void refreshLogs()} disabled={busy.logs}>{ui.logRefresh}</button>
+              <button onClick={() => void copyLogs()}>{ui.copyLog}</button>
+              <button onClick={() => void openLogsDir()}>{ui.openLogDir}</button>
+              <button onClick={() => void openIssues()}>{ui.openIssues}</button>
+            </div>
+
+            <pre className="log-view">{logContent || ui.logsEmpty}</pre>
           </section>
         </main>
       )}

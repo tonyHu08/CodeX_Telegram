@@ -25,6 +25,9 @@ declare global {
       getWindowMode: () => Promise<any>;
       setWindowMode: (mode: 'onboarding' | 'advanced', focusSection?: 'phone' | 'autostart' | 'bot' | null) => Promise<any>;
       hideWindow: () => Promise<any>;
+      getLogsTail: (file: 'agent.log' | 'relay.log', lines?: number) => Promise<string>;
+      openLogsDir: () => Promise<string>;
+      openFeedbackIssues: () => Promise<void>;
       onWindowModeChanged: (
         handler: (payload: { mode: 'onboarding' | 'advanced'; focusSection: 'phone' | 'autostart' | 'bot' | null }) => void
       ) => () => void;

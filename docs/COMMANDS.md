@@ -12,8 +12,11 @@
 
 ### Session commands
 - `/threads`
+  - Each thread now shows live task state inline (`⏳ running` / `🕒 queued` / `✅ idle`).
 - `/bind latest`
 - `/bind <threadId|index>`
+- `/usage` (alias: `/limits`)
+  - Show Codex rate limits remaining and reset time.
 - `/active`
 - `/current`
 - `/detail <index|threadId|current|latest>`
@@ -38,8 +41,11 @@
 
 ### 会话命令
 - `/threads`
+  - 每个 thread 行内会展示任务状态（`⏳ 运行中` / `🕒 排队中` / `✅ 空闲`）。
 - `/bind latest`
 - `/bind <threadId|编号>`
+- `/usage`（别名：`/limits`）
+  - 查询 Codex 剩余用量与重置时间。
 - `/active`
 - `/current`
 - `/detail <编号|threadId|current|latest>`

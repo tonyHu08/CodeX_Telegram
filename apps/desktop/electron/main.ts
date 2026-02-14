@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, shell } from 'electron';
 import WebSocket from 'ws';
 import keytar from 'keytar';
 import { startLocalRelay, type LocalRelayHandle } from './local-relay';
@@ -29,6 +29,7 @@ const LOCAL_RELAY_STORE_PATH = path.join(dataRoot(), 'data', 'local-relay-store.
 const RELAY_CONFIG_PATH = path.join(dataRoot(), 'relay-config.json');
 const LOCAL_RELAY_HOST = '127.0.0.1';
 const LOCAL_RELAY_PORT = 8787;
+const FEEDBACK_ISSUES_URL = process.env.CB_FEEDBACK_ISSUES_URL || 'https://github.com/tonyHu08/CodeX_Bridge/issues';
 
 type RelaySettings = {
   telegramBotToken: string;
@@ -46,10 +47,23 @@ type AppSnapshot = {
   relayConnected: boolean;
   paired: boolean;
   threadBound: boolean;
+  statusChecks: {
+    codexReady: boolean;
+    remoteServiceRunning: boolean;
+    phonePaired: boolean;
+    threadBound: boolean;
+  };
   onboardingStep: 1 | 2 | 3 | 4 | 5;
   remoteState: RemoteState;
   locale: BridgeLocale;
   selectedThreadId: string | null;
+  currentThread: {
+    id: string;
+    title: string;
+    updatedAt: number;
+    source: string;
+    cwd: string | null;
+  } | null;
   botUsername: string | null;
   lastError: string | null;
 };
@@ -190,29 +204,36 @@ function readJsonFileIfExists(filePath: string): Record<string, unknown> {
 }
 
 function createTrayIconByState(state: RemoteState) {
-  const bg =
-    state === 'online'
-      ? '#1d7be5'
-      : state === 'partial'
-        ? '#c89a2b'
-        : '#7e8a9d';
-  const fg =
-    state === 'online'
-      ? '#ffffff'
-      : state === 'partial'
-        ? '#fffdf7'
-        : '#f2f4f7';
-  const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-  <rect x="1.5" y="1.5" width="15" height="15" rx="4" fill="${bg}"/>
-  <rect x="4.2" y="5.1" width="9.6" height="1.2" rx="0.6" fill="${fg}" opacity="0.95"/>
-  <rect x="4.2" y="11.7" width="9.6" height="1.2" rx="0.6" fill="${fg}" opacity="0.95"/>
-  <path d="M7.3 6.9a2.2 2.2 0 1 0 0 4.2" fill="none" stroke="${fg}" stroke-width="1.05" stroke-linecap="round"/>
-  <path d="M9.9 6.9h1.9a1.1 1.1 0 0 1 0 2.2H9.9zM9.9 9.1h2.1a1.15 1.15 0 0 1 0 2.3H9.9z" fill="none" stroke="${fg}" stroke-width="0.85" stroke-linejoin="round"/>
-</svg>`.trim();
-  const icon = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
-  icon.setTemplateImage(false);
-  return icon.resize({ width: 18, height: 18 });
+  const iconPath2x = path.join(__dirname, 'assets', 'trayTemplate@2x.png');
+  const iconPath = path.join(__dirname, 'assets', 'trayTemplate.png');
+  const colorIconPath = path.join(__dirname, 'assets', 'cab-brand-icon.png');
+
+  let icon = nativeImage.createFromPath(iconPath2x);
+  if (icon.isEmpty()) {
+    icon = nativeImage.createFromPath(iconPath);
+  }
+  if (icon.isEmpty()) {
+    icon = nativeImage.createFromPath(colorIconPath);
+  }
+  if (icon.isEmpty()) {
+    const fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><path d="M3.4 11.8V8.3a4.6 4.6 0 0 1 4.6-4.6h2a4.6 4.6 0 0 1 4.6 4.6v3.5M2.7 11.9H15.3M8.3 6.2V11.9M9 6.2V11.9M9.7 6.2V11.9" fill="none" stroke="#000" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    icon = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(fallbackSvg).toString('base64')}`);
+  }
+
+  const targetSize = state === 'offline' ? 16 : 18;
+  const sized = icon.resize({ width: targetSize, height: targetSize });
+  sized.setTemplateImage(false);
+  return sized;
+}
+
+function toEpochMs(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  if (value < 10_000_000_000) {
+    return Math.floor(value * 1000);
+  }
+  return Math.floor(value);
 }
 
 function findMonorepoRoot(): string | null {
@@ -389,6 +410,31 @@ class DesktopRuntime {
   private relayManagedByApp = false;
   private inMemoryDeviceToken: string | null = null;
   private lastHealthReport: HealthReport | null = null;
+  private appSnapshotCache: { value: AppSnapshot; expiresAt: number } | null = null;
+  private relayHealthCache: {
+    value: {
+      ok: boolean;
+      relayBaseUrl?: string;
+      websocketClients?: number;
+      telegramEnabled?: boolean;
+      botUsername?: string;
+      targetBaseUrl: string;
+      checkedAt: number;
+    };
+    checkedAt: number;
+  } | null = null;
+  private relayHealthRefreshPromise: Promise<void> | null = null;
+  private threadSummaryCache: {
+    value: {
+      id: string;
+      title: string;
+      updatedAt: number;
+      source: string;
+      cwd: string | null;
+    };
+    checkedAt: number;
+  } | null = null;
+  private threadSummaryRefreshPromise: Promise<void> | null = null;
 
   constructor() {
     fs.mkdirSync(dataRoot(), { recursive: true });
@@ -433,6 +479,93 @@ class DesktopRuntime {
     this.agent.on('outbound', (event: DeviceOutboundEvent) => {
       this.relay.send(event);
     });
+  }
+
+  private invalidateCaches(): void {
+    this.appSnapshotCache = null;
+  }
+
+  private invalidateThreadCache(): void {
+    this.threadSummaryCache = null;
+    this.threadSummaryRefreshPromise = null;
+    this.invalidateCaches();
+  }
+
+  private async fetchJsonWithTimeout<T>(url: string, timeoutMs: number, init?: RequestInit): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer.unref();
+    try {
+      return await httpJson<T>(url, {
+        ...init,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private maybeRefreshRelayHealth(force = false): void {
+    if (this.relayHealthRefreshPromise) {
+      return;
+    }
+    const freshEnough = this.relayHealthCache && Date.now() - this.relayHealthCache.checkedAt <= 5_000;
+    if (!force && freshEnough) {
+      return;
+    }
+    this.relayHealthRefreshPromise = this.checkRelayHealth(800)
+      .then((health) => {
+        this.relayHealthCache = {
+          value: health,
+          checkedAt: Date.now(),
+        };
+      })
+      .catch(() => {
+        if (!this.relayHealthCache || Date.now() - this.relayHealthCache.checkedAt > 30_000) {
+          this.relayHealthCache = null;
+        }
+      })
+      .finally(() => {
+        this.relayHealthRefreshPromise = null;
+      });
+  }
+
+  private maybeRefreshCurrentThread(threadId: string): void {
+    if (!threadId) {
+      return;
+    }
+    if (this.threadSummaryRefreshPromise) {
+      return;
+    }
+    const freshEnough = this.threadSummaryCache
+      && this.threadSummaryCache.value.id === threadId
+      && Date.now() - this.threadSummaryCache.checkedAt <= 5_000;
+    if (freshEnough) {
+      return;
+    }
+
+    this.threadSummaryRefreshPromise = this.agent.getBoundThreadSummary()
+      .then((summary) => {
+        if (!summary || summary.id !== threadId) {
+          return;
+        }
+        this.threadSummaryCache = {
+          value: {
+            id: summary.id,
+            title: summary.title || summary.preview || summary.id,
+            updatedAt: toEpochMs(summary.updatedAt || 0),
+            source: summary.source || 'unknown',
+            cwd: summary.cwd || null,
+          },
+          checkedAt: Date.now(),
+        };
+      })
+      .catch(() => {
+        // ignore refresh failures and keep previous cache
+      })
+      .finally(() => {
+        this.threadSummaryRefreshPromise = null;
+      });
   }
 
   private async resolveDeviceToken(): Promise<string | null> {
@@ -524,11 +657,13 @@ class DesktopRuntime {
       }
     }
     await this.relay.connect();
+    this.invalidateCaches();
   }
 
   async stop(): Promise<void> {
     await this.relay.disconnect();
     await this.agent.stop();
+    this.invalidateCaches();
   }
 
   private shouldManageRelayLifecycle(): boolean {
@@ -572,6 +707,8 @@ class DesktopRuntime {
     if (this.shouldManageRelayLifecycle()) {
       this.repairManagedLocalRelay();
     }
+    this.relayHealthCache = null;
+    this.invalidateCaches();
     return next;
   }
 
@@ -689,9 +826,7 @@ class DesktopRuntime {
     const normalized = normalizeLocale(locale);
     this.agent.setLocale(normalized);
     this.configStore.update((cfg) => ({ ...cfg, locale: normalized }));
-    if (this.shouldManageRelayLifecycle()) {
-      this.repairManagedLocalRelay();
-    }
+    this.invalidateCaches();
     return this.configStore.load();
   }
 
@@ -699,6 +834,8 @@ class DesktopRuntime {
     const cfg = this.configStore.load();
     const normalized = normalizeRelayBaseUrl(relayBaseUrl, cfg.locale);
     this.configStore.update((current) => ({ ...current, relayBaseUrl: normalized }));
+    this.relayHealthCache = null;
+    this.invalidateCaches();
     return this.configStore.load();
   }
 
@@ -743,16 +880,16 @@ class DesktopRuntime {
     }
   }
 
-  async checkRelayHealth() {
+  async checkRelayHealth(timeoutMs = 800) {
     const cfg = this.configStore.load();
     const baseUrl = cfg.relayBaseUrl.replace(/\/$/, '');
-    const health = await httpJson<{
+    const health = await this.fetchJsonWithTimeout<{
       ok: boolean;
       relayBaseUrl?: string;
       websocketClients?: number;
       telegramEnabled?: boolean;
       botUsername?: string;
-    }>(`${baseUrl}/healthz`);
+    }>(`${baseUrl}/healthz`, Math.max(200, timeoutMs));
     return {
       ...health,
       targetBaseUrl: baseUrl,
@@ -787,6 +924,7 @@ class DesktopRuntime {
         // Continue with in-memory token fallback.
       }
       await this.relay.reconnectNow();
+      this.invalidateCaches();
     }
 
     return result;
@@ -802,6 +940,7 @@ class DesktopRuntime {
       ...cfg,
       selectedThreadId: threadId,
     }));
+    this.invalidateThreadCache();
     return this.configStore.load();
   }
 
@@ -818,6 +957,7 @@ class DesktopRuntime {
     healthOk: boolean;
     botConfigured: boolean;
     paired: boolean;
+    threadBound: boolean;
   }): 1 | 2 | 3 | 4 | 5 {
     if (!input.healthOk) {
       return 1;
@@ -827,6 +967,9 @@ class DesktopRuntime {
     }
     if (!input.paired) {
       return 3;
+    }
+    if (!input.threadBound) {
+      return 4;
     }
     return 5;
   }
@@ -848,14 +991,36 @@ class DesktopRuntime {
   }
 
   async getAppSnapshot(): Promise<AppSnapshot> {
+    if (this.appSnapshotCache && this.appSnapshotCache.expiresAt > Date.now()) {
+      return this.appSnapshotCache.value;
+    }
+
     const status = await this.getCurrentStatus();
     const relaySettings = this.getRelaySettings();
     const relayService = this.relayServiceStatus();
-    const relayHealth = await this.checkRelayHealth().catch(() => null);
     const healthOk = this.lastHealthReport?.ok ?? false;
     const botConfigured = relaySettings.telegramBotToken.trim().length > 0;
     const paired = Boolean(status.relayConnected) || Boolean(status.hasDeviceToken);
     const threadBound = Boolean(status.selectedThreadId);
+    this.maybeRefreshRelayHealth();
+    if (status.selectedThreadId) {
+      this.maybeRefreshCurrentThread(status.selectedThreadId);
+    } else {
+      this.threadSummaryCache = null;
+    }
+
+    const relayHealth = this.relayHealthCache?.value || null;
+    const currentThread = status.selectedThreadId
+      ? (this.threadSummaryCache && this.threadSummaryCache.value.id === status.selectedThreadId
+        ? this.threadSummaryCache.value
+        : {
+            id: status.selectedThreadId,
+            title: status.selectedThreadId,
+            updatedAt: 0,
+            source: 'unknown',
+            cwd: null,
+          })
+      : null;
     const remoteState = this.computeRemoteState({
       healthOk,
       botConfigured,
@@ -864,24 +1029,37 @@ class DesktopRuntime {
       relayConnected: status.relayConnected,
     });
 
-    return {
+    const snapshot: AppSnapshot = {
       healthOk,
       botConfigured,
       relayRunning: relayService.running,
       relayConnected: status.relayConnected,
       paired,
       threadBound,
+      statusChecks: {
+        codexReady: healthOk,
+        remoteServiceRunning: relayService.running,
+        phonePaired: paired,
+        threadBound,
+      },
       onboardingStep: this.computeOnboardingStep({
         healthOk,
         botConfigured,
         paired,
+        threadBound,
       }),
       remoteState,
       locale: this.configStore.load().locale,
       selectedThreadId: status.selectedThreadId,
+      currentThread,
       botUsername: relayHealth?.botUsername || null,
       lastError: status.lastError,
     };
+    this.appSnapshotCache = {
+      value: snapshot,
+      expiresAt: Date.now() + 1000,
+    };
+    return snapshot;
   }
 
   async clearPairing() {
@@ -892,6 +1070,7 @@ class DesktopRuntime {
       // ignore keychain delete failures
     }
     await this.relay.disconnect();
+    this.invalidateCaches();
   }
 
   serviceControl(action: 'install' | 'start' | 'stop' | 'restart' | 'status' | 'uninstall') {
@@ -909,26 +1088,31 @@ class DesktopRuntime {
           PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
         },
       });
+      this.invalidateCaches();
       return this.launchdManager.status();
     }
 
     if (action === 'start') {
       this.launchdManager.start();
+      this.invalidateCaches();
       return this.launchdManager.status();
     }
 
     if (action === 'stop') {
       this.launchdManager.stop();
+      this.invalidateCaches();
       return this.launchdManager.status();
     }
 
     if (action === 'restart') {
       this.launchdManager.restart();
+      this.invalidateCaches();
       return this.launchdManager.status();
     }
 
     if (action === 'uninstall') {
       this.launchdManager.uninstall();
+      this.invalidateCaches();
       return this.launchdManager.status();
     }
 
@@ -937,6 +1121,26 @@ class DesktopRuntime {
 
   async reconnectRelay() {
     await this.relay.reconnectNow();
+    this.invalidateCaches();
+  }
+
+  getLogsTail(file: 'agent.log' | 'relay.log', lines = 120): string {
+    const fileName = file === 'relay.log' ? 'relay.log' : 'agent.log';
+    const filePath = path.join(logDir(), fileName);
+    if (!fs.existsSync(filePath)) {
+      return '';
+    }
+    const content = fs.readFileSync(filePath, 'utf8');
+    const normalizedLines = content.replace(/\r\n/g, '\n').split('\n');
+    return normalizedLines.slice(Math.max(0, normalizedLines.length - Math.max(1, lines))).join('\n').trim();
+  }
+
+  async openLogsDir(): Promise<string> {
+    return await shell.openPath(logDir());
+  }
+
+  async openFeedbackIssues(): Promise<void> {
+    await shell.openExternal(FEEDBACK_ISSUES_URL);
   }
 
   async toggleRelay(shouldRun: boolean): Promise<ServiceStatus> {
@@ -947,13 +1151,21 @@ class DesktopRuntime {
       this.ensureManagedLocalRelayInstalled();
       this.relayLaunchdManager.start();
       this.relayManagedByApp = true;
-      await this.relay.reconnectNow();
+      this.invalidateCaches();
+      void this.relay.reconnectNow()
+        .then(() => {
+          this.invalidateCaches();
+        })
+        .catch(() => {
+          this.invalidateCaches();
+        });
       return this.relayServiceStatus();
     }
 
     this.relayLaunchdManager.stop();
     this.relayManagedByApp = false;
     await this.relay.disconnect();
+    this.invalidateCaches();
     return this.relayServiceStatus();
   }
 }
@@ -1103,7 +1315,7 @@ async function refreshTrayMenu() {
       },
       { type: 'separator' },
       {
-        label: withLocale(fallbackLocale, '打开高级配置…', 'Open advanced settings…'),
+        label: withLocale(fallbackLocale, '打开应用主页…', 'Open app home…'),
         click: () => showMainWindow('advanced'),
       },
       {
@@ -1154,7 +1366,7 @@ async function refreshTrayMenu() {
       }]
       : []),
     {
-      label: withLocale(locale, '打开高级配置…', 'Open advanced settings…'),
+      label: withLocale(locale, '打开应用主页…', 'Open app home…'),
       click: () => showMainWindow('advanced'),
     },
     {
@@ -1202,7 +1414,11 @@ function createTray() {
 
 async function registerIpcHandlers() {
   ipcMain.handle('ipc.getConfig', async () => runtime.getConfig());
-  ipcMain.handle('ipc.setLocale', async (_evt, locale: BridgeLocale) => runtime.setLocale(locale));
+  ipcMain.handle('ipc.setLocale', async (_evt, locale: BridgeLocale) => {
+    const updated = runtime.setLocale(locale);
+    void refreshTrayMenu();
+    return updated;
+  });
   ipcMain.handle('ipc.getRelaySettings', async () => runtime.getRelaySettings());
   ipcMain.handle('ipc.setRelaySettings', async (_evt, relaySettings: Partial<RelaySettings>) => runtime.setRelaySettings(relaySettings));
   ipcMain.handle('ipc.setRelayBaseUrl', async (_evt, relayBaseUrl: string) => runtime.setRelayBaseUrl(relayBaseUrl));
@@ -1219,7 +1435,14 @@ async function registerIpcHandlers() {
   ipcMain.handle('ipc.repairLocalRelay', async () => runtime.repairManagedLocalRelay());
   ipcMain.handle('ipc.clearPairing', async () => await runtime.clearPairing());
   ipcMain.handle('ipc.reconnectRelay', async () => await runtime.reconnectRelay());
-  ipcMain.handle('ipc.toggleRelay', async (_evt, shouldRun: boolean) => await runtime.toggleRelay(!!shouldRun));
+  ipcMain.handle('ipc.toggleRelay', async (_evt, shouldRun: boolean) => {
+    const status = await runtime.toggleRelay(!!shouldRun);
+    void refreshTrayMenu();
+    return status;
+  });
+  ipcMain.handle('ipc.getLogsTail', async (_evt, file: 'agent.log' | 'relay.log', lines?: number) => runtime.getLogsTail(file, lines));
+  ipcMain.handle('ipc.openLogsDir', async () => await runtime.openLogsDir());
+  ipcMain.handle('ipc.openFeedbackIssues', async () => await runtime.openFeedbackIssues());
   ipcMain.handle('ipc.getWindowMode', async () => ({
     mode: currentWindowMode,
     focusSection: currentWindowFocusSection,

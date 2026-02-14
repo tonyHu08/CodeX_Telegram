@@ -23,6 +23,9 @@ const desktopApi = {
   getWindowMode: async () => await ipcRenderer.invoke('ipc.getWindowMode'),
   setWindowMode: async (mode: 'onboarding' | 'advanced', focusSection?: 'phone' | 'autostart' | 'bot' | null) => await ipcRenderer.invoke('ipc.setWindowMode', mode, focusSection),
   hideWindow: async () => await ipcRenderer.invoke('ipc.hideWindow'),
+  getLogsTail: async (file: 'agent.log' | 'relay.log', lines = 120) => await ipcRenderer.invoke('ipc.getLogsTail', file, lines),
+  openLogsDir: async () => await ipcRenderer.invoke('ipc.openLogsDir'),
+  openFeedbackIssues: async () => await ipcRenderer.invoke('ipc.openFeedbackIssues'),
   onWindowModeChanged: (
     handler: (payload: { mode: 'onboarding' | 'advanced'; focusSection: 'phone' | 'autostart' | 'bot' | null }) => void,
   ) => {

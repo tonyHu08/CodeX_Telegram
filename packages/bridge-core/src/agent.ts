@@ -92,6 +92,8 @@ interface DisplayThreadsState {
   usingSidebarVisibility: boolean;
 }
 
+type ThreadTaskState = 'running' | 'queued' | 'idle';
+
 interface TurnConversationSummary {
   turnId: string;
   status: string;
@@ -453,23 +455,32 @@ function pickPreferredThread(
     : current;
 }
 
-function buildThreadButtonTitle(item: DisplayThreadItem, index: number, isCurrent: boolean, locale: BridgeLocale): string {
+function buildThreadButtonTitle(
+  item: DisplayThreadItem,
+  index: number,
+  isCurrent: boolean,
+  locale: BridgeLocale,
+  taskState: ThreadTaskState,
+): string {
   const title = truncate(compactText(item.title || localeText(locale, `会话 ${index + 1}`, `Thread ${index + 1}`)), 24);
-  return `${isCurrent ? '✅ ' : ''}🧵 ${title}`;
+  const status = taskState === 'running' ? '⏳' : taskState === 'queued' ? '🕒' : '✅';
+  return `${isCurrent ? '✅ ' : ''}${status} 🧵 ${title}`;
 }
 
 function buildThreadsInlineKeyboard(
   items: DisplayThreadItem[],
   currentThreadId: string | null,
   locale: BridgeLocale,
+  resolveTaskState: (threadId: string) => ThreadTaskState,
 ): Record<string, unknown> {
   const inlineRows: Array<Array<{ text: string; callback_data: string }>> = [];
 
   items.forEach((item, index) => {
     const isCurrent = currentThreadId === item.thread.id;
+    const taskState = resolveTaskState(item.thread.id);
     inlineRows.push([
       {
-        text: buildThreadButtonTitle(item, index, isCurrent, locale),
+        text: buildThreadButtonTitle(item, index, isCurrent, locale, taskState),
         callback_data: `bind_thread:${item.thread.id}`,
       },
     ]);
@@ -486,9 +497,10 @@ function buildMainReplyKeyboard(): Record<string, unknown> {
   return {
     keyboard: [
       [{ text: '/threads' }, { text: '/bind latest' }],
+      [{ text: '/usage' }, { text: '/status' }],
       [{ text: '/active' }, { text: '/current' }],
-      [{ text: '/detail' }, { text: '/status' }],
-      [{ text: '/cancel' }, { text: '/unbind' }],
+      [{ text: '/detail' }, { text: '/cancel' }],
+      [{ text: '/unbind' }],
     ],
     resize_keyboard: true,
   };
@@ -916,6 +928,66 @@ export class BridgeAgent extends EventEmitter {
     };
   }
 
+  async getBoundThreadSummary(): Promise<{
+    id: string;
+    title: string;
+    preview: string;
+    updatedAt: number;
+    source: string;
+    cwd: string | null;
+  } | null> {
+    const binding = this.getBinding();
+    if (!binding?.threadId) {
+      return null;
+    }
+
+    const control = await this.getControlClient();
+    const read = await withTimeout(
+      control.readThread(binding.threadId),
+      Math.min(this.options.requestTimeoutMs, 8_000),
+      'thread/read(bound-summary)',
+    );
+    if (!read?.thread?.id) {
+      return null;
+    }
+    const thread: ThreadSummary = {
+      id: String(read.thread.id || binding.threadId),
+      preview: sanitizePreview(String(read.thread.preview || '')),
+      updatedAt: Number(read.thread.updatedAt || 0),
+      source: sourceLabel(String(read.thread.source || 'unknown')),
+      cwd: read.thread.cwd == null ? null : String(read.thread.cwd),
+    };
+    const metadata = loadCodexSidebarMetadata(this.logger);
+    return {
+      id: thread.id,
+      title: resolveThreadTitle(thread, 0, metadata, this.locale),
+      preview: thread.preview,
+      updatedAt: thread.updatedAt,
+      source: thread.source,
+      cwd: thread.cwd,
+    };
+  }
+
+  private getThreadTaskState(threadId: string): ThreadTaskState {
+    if (this.runningTurns.has(threadId)) {
+      return 'running';
+    }
+    if (this.queuedByThread.has(threadId)) {
+      return 'queued';
+    }
+    return 'idle';
+  }
+
+  private formatThreadTaskStateLabel(taskState: ThreadTaskState): string {
+    if (taskState === 'running') {
+      return this.t('⏳ 运行中', '⏳ Running');
+    }
+    if (taskState === 'queued') {
+      return this.t('🕒 排队中', '🕒 Queued');
+    }
+    return this.t('✅ 空闲', '✅ Idle');
+  }
+
   async handleIncomingMessage(event: IncomingUserMessageEvent): Promise<void> {
     const fallbackCommand = this.parseControlCommandFromText(event.text);
     if (fallbackCommand) {
@@ -1110,6 +1182,9 @@ export class BridgeAgent extends EventEmitter {
     if (name === 'detail') {
       return { command: 'detail', args };
     }
+    if (name === 'usage' || name === 'limits') {
+      return { command: 'usage', args };
+    }
     if (name === 'unbind') {
       return { command: 'unbind', args };
     }
@@ -1142,6 +1217,9 @@ export class BridgeAgent extends EventEmitter {
           return;
         case 'detail':
           await this.handleDetailCommand(event);
+          return;
+        case 'usage':
+          await this.handleUsageCommand(event);
           return;
         case 'unbind':
           this.db.deleteBinding(this.bindingChatId());
@@ -1427,6 +1505,7 @@ export class BridgeAgent extends EventEmitter {
             '/threads - list recent threads (compact list with index binding)',
             '/bind latest - bind latest thread',
             '/bind <threadId|index> - bind by id (or legacy index)',
+            '/usage (or /limits) - show Codex rate limits remaining',
             '/active - quick view of active conversation thread',
             '/detail <index|threadId|current|latest> - view details (source/ID/CWD)',
             '/current - show latest snapshot of bound thread',
@@ -1440,6 +1519,7 @@ export class BridgeAgent extends EventEmitter {
             '/threads - 查看最近会话（精简列表，支持编号绑定）',
             '/bind latest - 绑定最新会话',
             '/bind <threadId|编号> - 按 ID（或兼容旧编号）绑定',
+            '/usage（或 /limits）- 查看 Codex 剩余用量',
             '/active - 快速查看当前正在对话的会话',
             '/detail <编号|threadId|current|latest> - 查看会话详情（来源/ID/CWD）',
             '/current - 查看当前绑定会话的最近对话快照',
@@ -1522,7 +1602,7 @@ export class BridgeAgent extends EventEmitter {
         lines.push(`<b>📁 ${escapeTelegramHtml(currentGroup)}</b>`);
       }
       lines.push(
-        `${index + 1}. ${isCurrent ? '✅ ' : ''}<b>${escapeTelegramHtml(item.title)}</b>`,
+        `${index + 1}. ${isCurrent ? '✅ ' : ''}<b>${escapeTelegramHtml(item.title)}</b> ${escapeTelegramHtml(this.formatThreadTaskStateLabel(this.getThreadTaskState(thread.id)))}`,
       );
       lines.push(
         this.locale === 'en'
@@ -1542,7 +1622,12 @@ export class BridgeAgent extends EventEmitter {
     lines.push(this.t('提示: 详情信息（来源/ID/CWD）请用 /detail。', 'Tip: use /detail for source/ID/CWD details.'));
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
-      replyMarkup: buildThreadsInlineKeyboard(displayItems, state.currentBinding?.threadId || null, this.locale),
+      replyMarkup: buildThreadsInlineKeyboard(
+        displayItems,
+        state.currentBinding?.threadId || null,
+        this.locale,
+        (threadId) => this.getThreadTaskState(threadId),
+      ),
       parseMode: 'HTML',
     });
   }
@@ -1945,6 +2030,69 @@ export class BridgeAgent extends EventEmitter {
             : this.t('(无)', '(none)');
         lines.push(`   🤖 ${assistantText}`);
       });
+    }
+
+    this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
+      replyMarkup: buildMainReplyKeyboard(),
+    });
+  }
+
+  private formatRateLimitResetTime(epochMs: number | null): string {
+    if (!epochMs || !Number.isFinite(epochMs)) {
+      return this.t('未知', 'unknown');
+    }
+    const localeTag = this.locale === 'en' ? 'en-US' : 'zh-CN';
+    return new Date(epochMs).toLocaleString(localeTag, {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  }
+
+  private localizeRateLimitLabel(label: string): string {
+    const normalized = (label || '').trim().toLowerCase();
+    if (normalized === '5h' || normalized === '5h quota' || normalized === 'primary') {
+      return this.t('五小时额度', '5h quota');
+    }
+    if (normalized === 'weekly' || normalized === 'secondary') {
+      return this.t('周额度', 'Weekly quota');
+    }
+    return label || this.t('额度', 'Quota');
+  }
+
+  private async handleUsageCommand(event: IncomingControlCommandEvent): Promise<void> {
+    const control = await this.getControlClient();
+    const snapshot = await withTimeout(
+      control.getAccountRateLimits(),
+      Math.min(this.options.requestTimeoutMs, 10_000),
+      'account/rateLimits/read',
+    );
+
+    if (!snapshot.windows.length) {
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.t('暂时无法读取用量信息，请稍后再试。', 'Unable to read usage data right now. Please try again later.'),
+        { replyMarkup: buildMainReplyKeyboard() },
+      );
+      return;
+    }
+
+    const lines: string[] = [this.t('📊 剩余用量', '📊 Rate limits remaining')];
+    lines.push('');
+    for (const window of snapshot.windows) {
+      const remain = Math.max(0, Math.min(100, Math.round(window.remainingPercent)));
+      const resetAt = this.formatRateLimitResetTime(window.resetsAt);
+      lines.push(`${this.localizeRateLimitLabel(window.label)}: ${remain}%  ·  ${this.t('重置', 'resets')} ${resetAt}`);
+    }
+    if (snapshot.planType) {
+      lines.push('');
+      lines.push(`${this.t('套餐', 'Plan')}: ${snapshot.planType}`);
+    }
+    if (snapshot.creditsText) {
+      lines.push(`${this.t('积分', 'Credits')}: ${snapshot.creditsText}`);
     }
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {

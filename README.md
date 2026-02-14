@@ -14,9 +14,11 @@ Goal: users download the app, complete setup in the wizard, and control Codex fr
 - `src` (legacy): previous bridge implementation kept for compatibility.
 
 ### Current capabilities
-- Desktop setup wizard and advanced settings.
+- Desktop setup wizard + app home (Current Status / Advanced Settings / Logs & Feedback).
 - Telegram bot pairing via QR code.
 - Bound-thread remote turns with status + final response.
+- Telegram usage query (`/usage`, alias `/limits`).
+- Thread list with live per-thread task state in `/threads`.
 - Approval routing (`/approve` / `/deny`).
 - Menu bar control (status, remote on/off, open settings).
 - i18n support for **English + Chinese** (`en`/`zh`) across desktop UI, tray, and Telegram responses.
@@ -78,9 +80,11 @@ npm run build
 - `src`（legacy）：历史桥接实现，保留兼容用途。
 
 ### 当前能力
-- 桌面端向导和高级设置。
+- 桌面端向导 + 应用主页（当前状态 / 高级设置 / 日志与反馈）。
 - Telegram 二维码配对。
 - 绑定线程后的远程执行（状态 + 最终回包）。
+- Telegram 用量查询（`/usage`，兼容 `/limits`）。
+- `/threads` 中展示每个会话的实时任务状态。
 - 审批流转（`/approve` / `/deny`）。
 - 菜单栏控制（状态、远程开关、打开设置）。
 - 国际化：桌面 UI、菜单栏、Telegram 回包支持 **中英文**（`zh`/`en`）。

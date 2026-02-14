@@ -60,6 +60,20 @@ interface ModelListResult {
   }>;
 }
 
+export interface RateLimitWindowSnapshot {
+  label: string;
+  usedPercent: number;
+  remainingPercent: number;
+  resetsAt: number | null;
+  windowDurationMins: number | null;
+}
+
+export interface RateLimitSnapshot {
+  windows: RateLimitWindowSnapshot[];
+  planType: string | null;
+  creditsText: string | null;
+}
+
 function idKey(id: JsonRpcId): string {
   return typeof id === 'number' ? `n:${id}` : `s:${id}`;
 }
@@ -109,6 +123,128 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function extractString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
+}
+
+function toNumberOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toEpochMs(value: unknown): number | null {
+  if (typeof value === 'string') {
+    const fromIso = Date.parse(value);
+    if (Number.isFinite(fromIso)) {
+      return fromIso;
+    }
+    const fromNumber = toNumberOrNull(value);
+    if (fromNumber == null) {
+      return null;
+    }
+    return fromNumber < 10_000_000_000 ? Math.floor(fromNumber * 1000) : Math.floor(fromNumber);
+  }
+  const numberValue = toNumberOrNull(value);
+  if (numberValue == null) {
+    return null;
+  }
+  return numberValue < 10_000_000_000 ? Math.floor(numberValue * 1000) : Math.floor(numberValue);
+}
+
+function normalizeWindowLabel(raw: Record<string, unknown>, fallback: string): string {
+  const label = extractString(raw.label)
+    || extractString(raw.name)
+    || extractString(raw.windowName)
+    || extractString(raw.window_name)
+    || fallback;
+  return label.trim() || fallback;
+}
+
+function normalizeWindowDurationMins(raw: Record<string, unknown>): number | null {
+  return toNumberOrNull(raw.windowDurationMins ?? raw.window_duration_mins ?? raw.windowMinutes ?? raw.window_minutes);
+}
+
+function labelFromWindowDurationMins(durationMins: number | null, fallback: string): string {
+  if (durationMins == null || !Number.isFinite(durationMins) || durationMins <= 0) {
+    if (/^primary$/i.test(fallback)) {
+      return '5h';
+    }
+    if (/^secondary$/i.test(fallback)) {
+      return 'Weekly';
+    }
+    return fallback;
+  }
+  if (durationMins >= 7 * 24 * 60 - 30 && durationMins <= 7 * 24 * 60 + 30) {
+    return 'Weekly';
+  }
+  if (durationMins === 300) {
+    return '5h';
+  }
+  if (durationMins % 60 === 0) {
+    return `${Math.round(durationMins / 60)}h`;
+  }
+  return `${Math.round(durationMins)}m`;
+}
+
+function normalizeUsedPercent(raw: Record<string, unknown>): number | null {
+  const direct = toNumberOrNull(raw.usedPercent ?? raw.used_percent ?? raw.usagePercent ?? raw.usage_percent);
+  if (direct != null) {
+    return Math.min(100, Math.max(0, direct));
+  }
+  const remaining = toNumberOrNull(raw.remainingPercent ?? raw.remaining_percent);
+  if (remaining != null) {
+    return Math.min(100, Math.max(0, 100 - remaining));
+  }
+  return null;
+}
+
+function normalizeRateLimitWindow(value: unknown, fallback: string): RateLimitWindowSnapshot | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const usedPercent = normalizeUsedPercent(value);
+  if (usedPercent == null) {
+    return null;
+  }
+  const resetsAt = toEpochMs(value.resetsAt ?? value.resetAt ?? value.reset_at);
+  const windowDurationMins = normalizeWindowDurationMins(value);
+  return {
+    label: labelFromWindowDurationMins(windowDurationMins, normalizeWindowLabel(value, fallback)),
+    usedPercent,
+    remainingPercent: Math.max(0, Math.min(100, 100 - usedPercent)),
+    resetsAt,
+    windowDurationMins,
+  };
+}
+
+function normalizeRateLimitWindows(value: unknown, fallback: string): RateLimitWindowSnapshot[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item, index) => normalizeRateLimitWindow(item, `${fallback} ${index + 1}`))
+      .filter((item): item is RateLimitWindowSnapshot => item !== null);
+  }
+  const single = normalizeRateLimitWindow(value, fallback);
+  return single ? [single] : [];
+}
+
+function normalizeCreditsText(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (isRecord(value)) {
+    const remaining = value.remaining ?? value.balance ?? value.value;
+    const unit = extractString(value.unit);
+    const num = toNumberOrNull(remaining);
+    if (num != null) {
+      return unit ? `${num} ${unit}` : String(num);
+    }
+  }
+  return null;
 }
 
 function normalizeSessionSource(value: unknown): string {
@@ -663,6 +799,20 @@ export class CodexAppServerClient extends EventEmitter {
       .map((item) => (typeof item?.model === 'string' && item.model ? item.model : item?.id))
       .filter((value): value is string => typeof value === 'string' && !!value);
     return Array.from(new Set(names));
+  }
+
+  async getAccountRateLimits(): Promise<RateLimitSnapshot> {
+    const result = await this.request<Record<string, unknown>>('account/rateLimits/read', {});
+    const limits = isRecord(result?.rateLimits) ? result.rateLimits : {};
+    const windows = [
+      ...normalizeRateLimitWindows(limits.primary, 'Primary'),
+      ...normalizeRateLimitWindows(limits.secondary, 'Secondary'),
+    ];
+    return {
+      windows,
+      planType: extractString(result?.planType).trim() || null,
+      creditsText: normalizeCreditsText(result?.credits),
+    };
   }
 
   async readThread(threadId: string): Promise<ThreadReadResult> {

@@ -1,33 +1,62 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Codex Bridge Icon">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0b2a60"/>
-      <stop offset="100%" stop-color="#0a2451"/>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#FAFCFF"/>
     </linearGradient>
-    <linearGradient id="glassHi" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.36"/>
-      <stop offset="70%" stop-color="#ffffff" stop-opacity="0.02"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9DB7F3"/>
+      <stop offset="100%" stop-color="#88A6E8"/>
     </linearGradient>
-    <radialGradient id="cyanGlow" cx="44%" cy="49%" r="30%">
-      <stop offset="0%" stop-color="#2bf1ff" stop-opacity="0.34"/>
-      <stop offset="68%" stop-color="#2bf1ff" stop-opacity="0.09"/>
-      <stop offset="100%" stop-color="#2bf1ff" stop-opacity="0"/>
+    <linearGradient id="symbolFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#DAE5FB"/>
+      <stop offset="100%" stop-color="#C6D7F5"/>
+    </linearGradient>
+    <linearGradient id="symbolStroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#90AFF0"/>
+      <stop offset="100%" stop-color="#7EA2EA"/>
+    </linearGradient>
+    <linearGradient id="pillars" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8EADF0"/>
+      <stop offset="100%" stop-color="#7CA0E7"/>
+    </linearGradient>
+    <radialGradient id="fade" cx="50%" cy="50%" r="52%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="1"/>
     </radialGradient>
-    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#b6d6ff" stop-opacity="0.85"/>
-      <stop offset="100%" stop-color="#4ed9ff" stop-opacity="0.55"/>
-    </linearGradient>
+    <filter id="shadow" x="-12%" y="-12%" width="124%" height="124%">
+      <feDropShadow dx="0" dy="20" stdDeviation="24" flood-color="#8EA6D8" flood-opacity="0.26"/>
+    </filter>
   </defs>
 
-  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="none"/>
 
-  <rect x="88" y="118" width="848" height="760" rx="145" fill="#22457f" opacity="0.33"/>
-  <rect x="88" y="118" width="848" height="760" rx="145" fill="url(#glassHi)"/>
-  <rect x="88" y="118" width="848" height="760" rx="145" fill="none" stroke="url(#edge)" stroke-width="8" opacity="0.78"/>
+  <g filter="url(#shadow)">
+    <rect x="84" y="104" width="856" height="816" rx="178" fill="url(#card)"/>
+    <rect x="84" y="104" width="856" height="816" rx="178" fill="none" stroke="url(#ring)" stroke-width="6"/>
+  </g>
 
-  <circle cx="392" cy="492" r="126" fill="url(#cyanGlow)"/>
+  <path
+    d="M257 594c-20 0-36-16-36-36c0-20 16-36 36-36c16 0 29-13 29-29V372c0-78 63-141 141-141h85c78 0 141 63 141 141v18c0 18 14 32 32 32s32-14 32-32v-18c0-113-92-205-205-205H427c-113 0-205 92-205 205v121c0 16-13 29-29 29c-20 0-36 16-36 36s16 36 36 36h64z"
+    fill="url(#symbolFill)"
+    stroke="url(#symbolStroke)"
+    stroke-width="14"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M767 594c20 0 36-16 36-36c0-20-16-36-36-36c-16 0-29-13-29-29V372c0-78-63-141-141-141h-85c-78 0-141 63-141 141v18c0 18-14 32-32 32s-32-14-32-32v-18c0-113 92-205 205-205h85c113 0 205 92 205 205v121c0 16 13 29 29 29c20 0 36 16 36 36s-16 36-36 36h-64z"
+    fill="url(#symbolFill)"
+    stroke="url(#symbolStroke)"
+    stroke-width="14"
+    stroke-linejoin="round"
+  />
 
-  <text x="522" y="606" text-anchor="middle" font-family="SF Pro Display, PingFang SC, Helvetica Neue, Arial, sans-serif" font-size="445" font-weight="820" fill="#ffffff">CB</text>
-  <path d="M376 377a145 145 0 1 0 0 245" fill="none" stroke="#2cf2f3" stroke-width="13" stroke-linecap="round"/>
+  <g fill="url(#pillars)">
+    <rect x="474" y="316" width="14" height="344" rx="7"/>
+    <rect x="501" y="316" width="14" height="344" rx="7"/>
+    <rect x="528" y="316" width="14" height="344" rx="7"/>
+    <rect x="555" y="316" width="14" height="344" rx="7"/>
+  </g>
+
+  <rect x="210" y="626" width="604" height="250" fill="url(#fade)"/>
 </svg>

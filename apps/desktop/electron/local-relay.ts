@@ -43,7 +43,7 @@ interface IncomingUserMessageEvent {
   createdAt: number;
 }
 
-type ControlCommandName = 'threads' | 'bind' | 'status' | 'current' | 'active' | 'detail' | 'unbind' | 'cancel' | 'help';
+type ControlCommandName = 'threads' | 'bind' | 'status' | 'current' | 'active' | 'detail' | 'usage' | 'unbind' | 'cancel' | 'help';
 
 interface IncomingControlCommandEvent {
   type: 'incomingControlCommand';
@@ -547,6 +547,9 @@ function parseSupportedCommand(rawText: string): { command: ControlCommandName; 
   if (name === 'detail') {
     return { command: 'detail', args };
   }
+  if (name === 'usage' || name === 'limits') {
+    return { command: 'usage', args };
+  }
   if (name === 'unbind') {
     return { command: 'unbind', args };
   }
@@ -582,6 +585,9 @@ function parseCallbackCommand(data: string): { command: ControlCommandName; args
   if (value === 'active') {
     return { command: 'active', args: '' };
   }
+  if (value === 'usage') {
+    return { command: 'usage', args: '' };
+  }
   if (value === 'unbind') {
     return { command: 'unbind', args: '' };
   }
@@ -601,9 +607,10 @@ function buildMainReplyKeyboard(): Record<string, unknown> {
   return {
     keyboard: [
       [{ text: '/threads' }, { text: '/bind latest' }],
+      [{ text: '/usage' }, { text: '/status' }],
       [{ text: '/active' }, { text: '/current' }],
-      [{ text: '/detail' }, { text: '/status' }],
-      [{ text: '/cancel' }, { text: '/unbind' }],
+      [{ text: '/detail' }, { text: '/cancel' }],
+      [{ text: '/unbind' }],
     ],
     resize_keyboard: true,
   };
@@ -1356,6 +1363,8 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
       await telegramBot.setMyCommands([
         { command: 'threads', description: t('查看最近会话并快速绑定', 'List recent threads and bind quickly') },
         { command: 'bind', description: t('绑定会话（/bind latest 或 /bind <id>）', 'Bind a thread (/bind latest or /bind <id>)') },
+        { command: 'usage', description: t('查询 Codex 剩余用量', 'Show Codex usage limits') },
+        { command: 'limits', description: t('查询 Codex 剩余用量（别名）', 'Show Codex usage limits (alias)') },
         { command: 'current', description: t('查看当前会话快照', 'Show current thread snapshot') },
         { command: 'active', description: t('查看当前会话标题', 'Show active thread title') },
         { command: 'detail', description: t('查看会话详情（来源/ID/CWD）', 'Show thread details (source/ID/CWD)') },
