@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  macos:
+    name: Build macOS (DMG + ZIP)
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Setup workspace deps
+        run: npm run setup
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build artifacts
+        env:
+          CI: "true"
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm --prefix apps/desktop run dist:all
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: .github/release-template.md
+          files: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap

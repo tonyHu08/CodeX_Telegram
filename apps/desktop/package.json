@@ -1,9 +1,10 @@
 {
   "name": "@codex-bridge/desktop",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "private": true,
   "main": "dist/electron/main.js",
   "scripts": {
+    "clean:pkg": "rm -rf release dist/mac-* dist/*.dmg dist/*.zip dist/*.blockmap dist/builder-debug.yml",
     "build:core": "npm --prefix ../../packages/bridge-core run build",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json && mkdir -p dist/electron/assets && cp -f electron/assets/trayTemplate.png dist/electron/assets/trayTemplate.png && cp -f electron/assets/trayTemplate@2x.png dist/electron/assets/trayTemplate@2x.png",
@@ -12,7 +13,8 @@
     "start": "electron dist/electron/main.js",
     "dev": "npm run build && npm run start",
     "dist:zip": "npm run build && npm_config_electron_mirror=https://github.com/electron/electron/releases/download/ electron-builder --mac zip --publish never",
-    "dist": "npm run build && npm_config_electron_mirror=https://github.com/electron/electron/releases/download/ electron-builder --mac dmg --publish never"
+    "dist": "npm run clean:pkg && npm run build && npm_config_electron_mirror=https://github.com/electron/electron/releases/download/ electron-builder --mac dmg --publish never",
+    "dist:all": "npm run clean:pkg && npm run build && npm_config_electron_mirror=https://github.com/electron/electron/releases/download/ electron-builder --mac dmg zip --publish never"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
@@ -42,11 +44,13 @@
     "appId": "com.codexbridge.desktop",
     "productName": "Codex Bridge Desktop",
     "files": [
-      "dist/**/*",
+      "dist/electron/**/*",
+      "dist/renderer/**/*",
       "package.json"
     ],
     "directories": {
-      "buildResources": "build"
+      "buildResources": "build",
+      "output": "release"
     },
     "mac": {
       "icon": "build/icon.icns",

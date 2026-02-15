@@ -1,26 +1,26 @@
 {
   "name": "codex-remote-bridge",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "private": true,
   "license": "MIT",
   "description": "Codex Bridge Desktop monorepo (bridge-core + desktop app + cloud relay)",
   "main": "dist/index.js",
   "scripts": {
-    "setup": "npm --prefix packages/bridge-core install && npm --prefix services/cloud-relay install && npm --prefix apps/desktop install",
+    "setup": "npm_config_userconfig=$PWD/.npmrc npm --prefix packages/bridge-core install && npm_config_userconfig=$PWD/.npmrc npm --prefix services/cloud-relay install && npm_config_userconfig=$PWD/.npmrc npm --prefix apps/desktop install",
     "build:legacy": "tsc -p tsconfig.json",
     "typecheck:legacy": "tsc --noEmit -p tsconfig.json",
     "dev:legacy": "tsx src/index.ts",
     "start:legacy": "node dist/index.js",
-    "build:core": "npm --prefix packages/bridge-core run build",
-    "build:relay": "npm --prefix services/cloud-relay run build",
-    "build:desktop": "npm --prefix apps/desktop run build",
+    "build:core": "npm_config_userconfig=$PWD/.npmrc npm --prefix packages/bridge-core run build",
+    "build:relay": "npm_config_userconfig=$PWD/.npmrc npm --prefix services/cloud-relay run build",
+    "build:desktop": "npm_config_userconfig=$PWD/.npmrc npm --prefix apps/desktop run build",
     "build": "npm run build:core && npm run build:relay && npm run build:desktop",
-    "typecheck": "npm --prefix packages/bridge-core run typecheck && npm --prefix services/cloud-relay run typecheck && npm --prefix apps/desktop run typecheck",
-    "dev:relay": "npm --prefix services/cloud-relay run dev",
-    "start:relay": "npm --prefix services/cloud-relay run start",
-    "start:desktop": "npm --prefix apps/desktop run start",
-    "dist:desktop:zip": "npm --prefix apps/desktop run dist:zip",
-    "dist:desktop": "npm --prefix apps/desktop run dist"
+    "typecheck": "npm_config_userconfig=$PWD/.npmrc npm --prefix packages/bridge-core run typecheck && npm_config_userconfig=$PWD/.npmrc npm --prefix services/cloud-relay run typecheck && npm_config_userconfig=$PWD/.npmrc npm --prefix apps/desktop run typecheck",
+    "dev:relay": "npm_config_userconfig=$PWD/.npmrc npm --prefix services/cloud-relay run dev",
+    "start:relay": "npm_config_userconfig=$PWD/.npmrc npm --prefix services/cloud-relay run start",
+    "start:desktop": "npm_config_userconfig=$PWD/.npmrc npm --prefix apps/desktop run start",
+    "dist:desktop:zip": "npm_config_userconfig=$PWD/.npmrc npm --prefix apps/desktop run dist:zip",
+    "dist:desktop": "npm_config_userconfig=$PWD/.npmrc npm --prefix apps/desktop run dist"
   },
   "engines": {
     "node": ">=20.0.0"
