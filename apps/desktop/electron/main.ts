@@ -35,7 +35,9 @@ const LOCAL_RELAY_PORT = 8787;
 const FEEDBACK_ISSUES_URL = process.env.CB_FEEDBACK_ISSUES_URL || 'https://github.com/tonyHu08/CodeX_Bridge/issues';
 
 if (!process.env.CB_DEFAULT_RELAY_BASE_URL && app.isPackaged) {
-  process.env.CB_DEFAULT_RELAY_BASE_URL = OFFICIAL_RELAY_BASE_URL;
+  // Default to local relay for the open-source "local mode" product.
+  // Hosted relay (if any) should be explicitly configured via env.
+  process.env.CB_DEFAULT_RELAY_BASE_URL = LOCAL_RELAY_BASE_URL;
 }
 
 type RelaySettings = {
@@ -580,7 +582,12 @@ class DesktopRuntime {
 
   private async resolveDeviceToken(): Promise<string | null> {
     try {
-      const fromKeychain = await keytar.getPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+      // Keychain access can trigger a prompt (or hang) on some systems.
+      // Treat it as best-effort and fall back quickly.
+      const fromKeychain = await Promise.race<string | null>([
+        keytar.getPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT),
+        new Promise((resolve) => setTimeout(() => resolve(null), 350)),
+      ]);
       if (fromKeychain) {
         this.inMemoryDeviceToken = fromKeychain;
         return fromKeychain;
@@ -604,11 +611,8 @@ class DesktopRuntime {
     }
 
     this.inMemoryDeviceToken = restored;
-    try {
-      await keytar.setPassword(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, restored);
-    } catch {
-      // Keep running with in-memory fallback token.
-    }
+    // Important: do NOT auto-write back into Keychain here.
+    // On some systems this triggers a permission prompt and can hang startup/background flows.
     return restored;
   }
 

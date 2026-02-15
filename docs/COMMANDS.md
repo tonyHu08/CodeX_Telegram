@@ -12,7 +12,7 @@
 
 ### Session commands
 - `/threads`
-  - Each thread shows bridge task state inline (`⏳ running` / `🕒 queued` / `⚪ unobserved`).
+  - List recent Codex threads and bind quickly.
 - `/bind latest`
 - `/bind <threadId|index>`
 - `/usage` (alias: `/limits`)
@@ -41,7 +41,7 @@
 
 ### 会话命令
 - `/threads`
-  - 每个 thread 行内会展示桥接任务状态（`⏳ 运行中` / `🕒 排队中` / `⚪ 未观测`）。
+  - 查看最近会话并快速绑定。
 - `/bind latest`
 - `/bind <threadId|编号>`
 - `/usage`（别名：`/limits`）
