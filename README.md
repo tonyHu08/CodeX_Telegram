@@ -10,6 +10,11 @@ Codex Bridge is built for the exact pain point many people hit today: Codex is p
 
 ![App Icon](./apps/desktop/electron/assets/cab-brand-icon.png)
 
+### Real screenshots
+
+![Desktop app home](./docs/assets/readme/desktop-home.png)
+![Telegram remote control](./docs/assets/readme/telegram-threads.png)
+
 ### Why people star this project
 
 - No CLI in the main path.
@@ -18,9 +23,15 @@ Codex Bridge is built for the exact pain point many people hit today: Codex is p
 - Menu bar quick controls for online state and remote switch.
 - Built-in bilingual UX (English + Chinese).
 
+### Recent stability fixes
+
+- `/threads` is now resilient: if `thread/list` is slow/unavailable, it degrades to the Codex sidebar cache so Telegram still gets a fast reply.
+- Reduced “stuck waiting” cases caused by Keychain prompts/hangs (best-effort Keychain access with short timeouts).
+
 ### What you can do
 
-- Send text or image input from Telegram to the bound Codex thread.
+- Send text input from Telegram to the bound Codex thread.
+- Send photos as image input (experimental; depends on your Codex App / App Server version).
 - Watch execution state + final response in the same Telegram chat.
 - Query Codex limits with `/usage` (alias: `/limits`).
 - Cancel long runs with `/cancel`.
@@ -73,9 +84,9 @@ flowchart TB
 
 ### Screenshots and media
 
-![Telegram pairing result](./assets/press-kit/screens/telegram-pairing-result.png)
-![Telegram threads inline](./assets/press-kit/screens/telegram-threads-inline.png)
-![Telegram threads status](./assets/press-kit/screens/telegram-threads-status.png)
+More E2E screenshots:
+
+- `docs/assets/e2e/` (onboarding + Telegram)
 
 - [Press kit](./assets/press-kit/README.md)
 - [Launch playbook](./docs/LAUNCH_PLAYBOOK.md)
