@@ -84,9 +84,9 @@ flowchart TB
 
 ### Screenshots and media
 
-More E2E screenshots:
+More screenshots:
 
-- `docs/assets/e2e/` (onboarding + Telegram)
+- `docs/assets/readme/`
 
 - [Press kit](./assets/press-kit/README.md)
 - [Launch playbook](./docs/LAUNCH_PLAYBOOK.md)

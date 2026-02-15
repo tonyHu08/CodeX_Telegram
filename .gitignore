@@ -15,3 +15,6 @@ data/
 _old_path_stub_backup_*/
 apps/desktop/release/
 apps/desktop/.vite/
+
+# Local-only E2E artifacts (may contain private data; do not commit)
+docs/assets/e2e/
