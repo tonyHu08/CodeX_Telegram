@@ -11,7 +11,7 @@ Control your local Codex threads from Telegram. Keep working while away from you
 
 [English](#english) | [中文](#中文)
 
-Quick links: [Download](https://github.com/tonyHu08/CodeX_Bridge/releases) · [Commands](./docs/COMMANDS.md) · [Troubleshooting](./docs/TROUBLESHOOTING.md) · [Report issue](https://github.com/tonyHu08/CodeX_Bridge/issues)
+Quick links: [Download](https://github.com/tonyHu08/CodeX_Bridge/releases) · [Commands](./docs/COMMANDS.md) · [FAQ](./docs/FAQ.md) · [Troubleshooting](./docs/TROUBLESHOOTING.md) · [Press kit](./assets/press-kit/README.md) · [Report issue](https://github.com/tonyHu08/CodeX_Bridge/issues)
 
 ---
 
@@ -112,6 +112,13 @@ flowchart TB
 - [Threat model](./docs/THREAT_MODEL.md)
 - [Self-hosting](./docs/SELF_HOSTING.md)
 - [Troubleshooting](./docs/TROUBLESHOOTING.md)
+- [FAQ](./docs/FAQ.md)
+
+### Help this project grow 💡
+
+- Star the repo if it helped you.
+- Share a screenshot or a short clip: pairing → `/threads` → first reply.
+- If you write a post/video about it, open a PR to add it to the README.
 
 ### Development
 

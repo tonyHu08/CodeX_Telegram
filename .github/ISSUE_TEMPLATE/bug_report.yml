@@ -1,0 +1,50 @@
+name: Bug report
+description: Something isn't working as expected.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please don't paste secrets (Telegram bot tokens, API keys, etc.).
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+    validations:
+      required: true
+  - type: input
+    id: app_version
+    attributes:
+      label: App version
+      placeholder: e.g. v0.1.3
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps so we can reproduce it.
+      placeholder: |
+        1. Open the app...
+        2. In Telegram, send /threads...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      description: Paste the last ~200 lines from the app "Logs & Feedback" page, with secrets removed.
+      render: text
+

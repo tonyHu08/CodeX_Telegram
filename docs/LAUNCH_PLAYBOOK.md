@@ -14,11 +14,12 @@ This playbook helps you launch Codex Bridge in English and Chinese channels in o
 ## 2. Launch assets checklist
 
 - App download link (latest release).
-- 30-second demo GIF/video.
+- 30-second demo GIF/video (pairing → `/threads` → first reply).
 - 3 screenshots:
   - onboarding,
   - `/threads` binding in Telegram,
   - approval + final response.
+- Press kit (ready-to-use): `assets/press-kit/`
 - README link.
 - Privacy note: anonymous metrics only; no message content collected.
 
@@ -52,7 +53,15 @@ CTA：
 - Thursday: Chinese tutorial post + practical case.
 - Weekend: user story recap and feedback highlights.
 
-## 5. Comment/reply templates
+## 5. Launch day checklist (30 min)
+
+1. Make sure the latest Release has DMG + ZIP + screenshots in notes.
+2. Update README first screen (value + screenshots + 2-minute setup).
+3. Prepare 1 short clip and 3 screenshots from `assets/press-kit/`.
+4. Post in 1 EN channel + 1 ZH channel the same day.
+5. Stay online for 2 hours to answer comments (pairing failures, `/threads` tips).
+
+## 6. Comment/reply templates
 
 - EN:
   - `If pairing fails, click "Refresh pairing status" in app and send /start again in Telegram.`
