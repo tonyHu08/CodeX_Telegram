@@ -57,6 +57,9 @@
       "target": [
         "dmg"
       ],
+      "extendInfo": {
+        "LSUIElement": true
+      },
       "category": "public.app-category.developer-tools"
     }
   }

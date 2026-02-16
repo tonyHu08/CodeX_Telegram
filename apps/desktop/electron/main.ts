@@ -1267,15 +1267,13 @@ if (!singleInstanceLock) {
 }
 
 function updateDockVisibility(visible: boolean) {
+  void visible;
   if (!app.dock) {
     return;
   }
   try {
-    if (visible) {
-      app.dock.show();
-    } else {
-      app.dock.hide();
-    }
+    // Keep dock icon hidden in all modes. App is menu-bar first.
+    app.dock.hide();
   } catch {
     // ignore dock visibility errors
   }
@@ -1558,6 +1556,13 @@ async function bootstrap() {
   }
 
   await app.whenReady();
+  if (process.platform === 'darwin' && typeof app.setActivationPolicy === 'function') {
+    try {
+      app.setActivationPolicy('accessory');
+    } catch {
+      // ignore activation policy failures
+    }
+  }
   const isAgentMode = isAgentProcess;
   const isRelayMode = isRelayProcess;
 
