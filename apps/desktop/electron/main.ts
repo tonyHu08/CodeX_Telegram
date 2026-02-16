@@ -1256,7 +1256,7 @@ let trayInteractive = false;
 let isQuitting = false;
 let currentWindowMode: WindowMode = 'onboarding';
 let currentWindowFocusSection: WindowFocusSection = null;
-const runtime = new DesktopRuntime();
+let runtime: DesktopRuntime | null = null;
 let localRelayHandle: LocalRelayHandle | null = null;
 const isRelayProcess = process.argv.includes('--relay');
 const isAgentProcess = process.argv.includes('--agent');
@@ -1265,6 +1265,25 @@ const singleInstanceLock = requiresSingleInstanceLock ? app.requestSingleInstanc
 
 if (!singleInstanceLock) {
   app.quit();
+}
+
+function getRuntimeOrThrow(): DesktopRuntime {
+  if (!runtime) {
+    throw new Error('runtime is not initialized');
+  }
+  return runtime;
+}
+
+function readLocaleFallback(): BridgeLocale {
+  if (runtime) {
+    return runtime.getConfig().locale;
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath(), 'utf8')) as { locale?: string };
+    return normalizeLocale(parsed.locale);
+  } catch {
+    return normalizeLocale('');
+  }
 }
 
 function updateDockVisibility(visible: boolean) {
@@ -1375,8 +1394,9 @@ async function refreshTrayMenu() {
   if (!tray) {
     return;
   }
-  const fallbackLocale = runtime.getConfig().locale;
-  if (!trayInteractive) {
+  const runtimeRef = runtime;
+  const fallbackLocale = readLocaleFallback();
+  if (!trayInteractive || !runtimeRef) {
     setTrayIconState('offline');
     tray.setToolTip(withLocale(fallbackLocale, 'Codex Bridge Desktop（正在启动）', 'Codex Bridge Desktop (starting)'));
     tray.setContextMenu(Menu.buildFromTemplate([
@@ -1403,7 +1423,7 @@ async function refreshTrayMenu() {
     ]));
     return;
   }
-  const snapshot = await runtime.getAppSnapshot().catch(() => null);
+  const snapshot = await runtimeRef.getAppSnapshot().catch(() => null);
   if (!snapshot) {
     setTrayIconState('offline');
     tray.setContextMenu(Menu.buildFromTemplate([
@@ -1459,7 +1479,7 @@ async function refreshTrayMenu() {
     {
       label: remoteSwitchLabel,
       click: () => {
-        void runtime.toggleRelay(!snapshot.relayRunning).then(() => refreshTrayMenu());
+        void runtimeRef.toggleRelay(!snapshot.relayRunning).then(() => refreshTrayMenu());
       },
     },
     { type: 'separator' },
@@ -1516,41 +1536,48 @@ function createTray() {
   trayRefreshTimer.unref();
 }
 
+async function yieldToUiTick(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 async function registerIpcHandlers() {
-  ipcMain.handle('ipc.getConfig', async () => runtime.getConfig());
+  const runtimeRef = getRuntimeOrThrow();
+  ipcMain.handle('ipc.getConfig', async () => runtimeRef.getConfig());
   ipcMain.handle('ipc.setLocale', async (_evt, locale: BridgeLocale) => {
-    const updated = runtime.setLocale(locale);
+    const updated = runtimeRef.setLocale(locale);
     void refreshTrayMenu();
     return updated;
   });
-  ipcMain.handle('ipc.getRelaySettings', async () => runtime.getRelaySettings());
-  ipcMain.handle('ipc.setRelaySettings', async (_evt, relaySettings: Partial<RelaySettings>) => runtime.setRelaySettings(relaySettings));
-  ipcMain.handle('ipc.setRelayBaseUrl', async (_evt, relayBaseUrl: string) => runtime.setRelayBaseUrl(relayBaseUrl));
-  ipcMain.handle('ipc.useOfficialRelay', async () => runtime.useOfficialHostedRelay());
-  ipcMain.handle('ipc.useSelfHostedRelay', async () => runtime.useLocalSelfHostedRelay());
-  ipcMain.handle('ipc.checkRelayHealth', async () => await runtime.checkRelayHealth());
-  ipcMain.handle('ipc.getHealth', async () => await runtime.getHealth());
-  ipcMain.handle('ipc.getAppSnapshot', async () => await runtime.getAppSnapshot());
-  ipcMain.handle('ipc.startPairing', async () => await runtime.startPairing());
-  ipcMain.handle('ipc.checkPairingStatus', async (_evt, pairingSessionId: string) => await runtime.checkPairingStatus(pairingSessionId));
-  ipcMain.handle('ipc.listThreads', async () => await runtime.listThreads());
-  ipcMain.handle('ipc.bindThread', async (_evt, threadId: string) => await runtime.bindThread(threadId));
-  ipcMain.handle('ipc.getCurrentStatus', async () => await runtime.getCurrentStatus());
-  ipcMain.handle('ipc.serviceControl', async (_evt, action: 'install' | 'start' | 'stop' | 'restart' | 'status' | 'uninstall') => runtime.serviceControl(action));
-  ipcMain.handle('ipc.getRelayServiceStatus', async () => runtime.relayServiceStatus());
-  ipcMain.handle('ipc.repairLocalRelay', async () => runtime.repairManagedLocalRelay());
-  ipcMain.handle('ipc.clearPairing', async () => await runtime.clearPairing());
-  ipcMain.handle('ipc.reconnectRelay', async () => await runtime.reconnectRelay());
+  ipcMain.handle('ipc.getRelaySettings', async () => runtimeRef.getRelaySettings());
+  ipcMain.handle('ipc.setRelaySettings', async (_evt, relaySettings: Partial<RelaySettings>) => runtimeRef.setRelaySettings(relaySettings));
+  ipcMain.handle('ipc.setRelayBaseUrl', async (_evt, relayBaseUrl: string) => runtimeRef.setRelayBaseUrl(relayBaseUrl));
+  ipcMain.handle('ipc.useOfficialRelay', async () => runtimeRef.useOfficialHostedRelay());
+  ipcMain.handle('ipc.useSelfHostedRelay', async () => runtimeRef.useLocalSelfHostedRelay());
+  ipcMain.handle('ipc.checkRelayHealth', async () => await runtimeRef.checkRelayHealth());
+  ipcMain.handle('ipc.getHealth', async () => await runtimeRef.getHealth());
+  ipcMain.handle('ipc.getAppSnapshot', async () => await runtimeRef.getAppSnapshot());
+  ipcMain.handle('ipc.startPairing', async () => await runtimeRef.startPairing());
+  ipcMain.handle('ipc.checkPairingStatus', async (_evt, pairingSessionId: string) => await runtimeRef.checkPairingStatus(pairingSessionId));
+  ipcMain.handle('ipc.listThreads', async () => await runtimeRef.listThreads());
+  ipcMain.handle('ipc.bindThread', async (_evt, threadId: string) => await runtimeRef.bindThread(threadId));
+  ipcMain.handle('ipc.getCurrentStatus', async () => await runtimeRef.getCurrentStatus());
+  ipcMain.handle('ipc.serviceControl', async (_evt, action: 'install' | 'start' | 'stop' | 'restart' | 'status' | 'uninstall') => runtimeRef.serviceControl(action));
+  ipcMain.handle('ipc.getRelayServiceStatus', async () => runtimeRef.relayServiceStatus());
+  ipcMain.handle('ipc.repairLocalRelay', async () => runtimeRef.repairManagedLocalRelay());
+  ipcMain.handle('ipc.clearPairing', async () => await runtimeRef.clearPairing());
+  ipcMain.handle('ipc.reconnectRelay', async () => await runtimeRef.reconnectRelay());
   ipcMain.handle('ipc.toggleRelay', async (_evt, shouldRun: boolean) => {
-    const status = await runtime.toggleRelay(!!shouldRun);
+    const status = await runtimeRef.toggleRelay(!!shouldRun);
     void refreshTrayMenu();
     return status;
   });
-  ipcMain.handle('ipc.getLogsTail', async (_evt, file: 'agent.log' | 'relay.log', lines?: number) => runtime.getLogsTail(file, lines));
-  ipcMain.handle('ipc.openLogsDir', async () => await runtime.openLogsDir());
-  ipcMain.handle('ipc.openFeedbackIssues', async () => await runtime.openFeedbackIssues());
+  ipcMain.handle('ipc.getLogsTail', async (_evt, file: 'agent.log' | 'relay.log', lines?: number) => runtimeRef.getLogsTail(file, lines));
+  ipcMain.handle('ipc.openLogsDir', async () => await runtimeRef.openLogsDir());
+  ipcMain.handle('ipc.openFeedbackIssues', async () => await runtimeRef.openFeedbackIssues());
   ipcMain.handle('ipc.trackAnalyticsEvent', async (_evt, eventName: string, payload?: Record<string, unknown>) => {
-    await runtime.trackAnalyticsEvent(eventName, payload);
+    await runtimeRef.trackAnalyticsEvent(eventName, payload);
     return { ok: true };
   });
   ipcMain.handle('ipc.getWindowMode', async () => ({
@@ -1610,21 +1637,26 @@ async function bootstrap() {
     return;
   }
 
-  await registerIpcHandlers();
   if (!isAgentMode) {
     // Show tray immediately (disabled menu) so users get instant feedback on app launch.
     createTray();
+    // Let macOS render the tray icon before running sync startup work.
+    await yieldToUiTick();
   }
+
+  runtime = new DesktopRuntime();
+  await registerIpcHandlers();
+  const runtimeRef = getRuntimeOrThrow();
 
   if (!isAgentMode) {
-    runtime.startManagedLocalRelayIfNeeded();
+    runtimeRef.startManagedLocalRelayIfNeeded();
   }
 
-  await runtime.start();
+  await runtimeRef.start();
   trayInteractive = true;
   if (!isAgentMode) {
     void refreshTrayMenu();
-    const snapshot = await runtime.getAppSnapshot().catch(() => null);
+    const snapshot = await runtimeRef.getAppSnapshot().catch(() => null);
     if (!snapshot || snapshot.onboardingStep < 5) {
       showMainWindow('onboarding');
     } else {
@@ -1636,7 +1668,12 @@ async function bootstrap() {
 
   app.on('activate', () => {
     if (!isAgentMode) {
-      void runtime.getAppSnapshot()
+      const currentRuntime = runtime;
+      if (!currentRuntime) {
+        showMainWindow('advanced');
+        return;
+      }
+      void currentRuntime.getAppSnapshot()
         .then((snapshot) => {
           showMainWindow(snapshot.onboardingStep < 5 ? 'onboarding' : 'advanced');
         })
@@ -1667,7 +1704,9 @@ app.on('before-quit', () => {
     return;
   }
   if (!process.argv.includes('--agent')) {
-    runtime.stopManagedLocalRelayIfNeeded();
+    runtime?.stopManagedLocalRelayIfNeeded();
   }
-  void runtime.stop();
+  if (runtime) {
+    void runtime.stop();
+  }
 });
