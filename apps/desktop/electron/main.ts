@@ -1252,6 +1252,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let trayRefreshTimer: NodeJS.Timeout | null = null;
 let trayIconState: RemoteState | null = null;
+let trayInteractive = false;
 let isQuitting = false;
 let currentWindowMode: WindowMode = 'onboarding';
 let currentWindowFocusSection: WindowFocusSection = null;
@@ -1375,6 +1376,33 @@ async function refreshTrayMenu() {
     return;
   }
   const fallbackLocale = runtime.getConfig().locale;
+  if (!trayInteractive) {
+    setTrayIconState('offline');
+    tray.setToolTip(withLocale(fallbackLocale, 'Codex Bridge Desktop（正在启动）', 'Codex Bridge Desktop (starting)'));
+    tray.setContextMenu(Menu.buildFromTemplate([
+      {
+        label: 'Codex Bridge Desktop',
+        enabled: false,
+      },
+      {
+        label: withLocale(fallbackLocale, '⏳ 正在初始化，请稍候…', '⏳ Initializing, please wait...'),
+        enabled: false,
+      },
+      {
+        label: withLocale(fallbackLocale, '初始化完成后菜单将自动可用', 'Menu will be enabled automatically once ready'),
+        enabled: false,
+      },
+      { type: 'separator' },
+      {
+        label: withLocale(fallbackLocale, '退出 Codex Bridge', 'Quit Codex Bridge'),
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]));
+    return;
+  }
   const snapshot = await runtime.getAppSnapshot().catch(() => null);
   if (!snapshot) {
     setTrayIconState('offline');
@@ -1583,14 +1611,19 @@ async function bootstrap() {
   }
 
   await registerIpcHandlers();
+  if (!isAgentMode) {
+    // Show tray immediately (disabled menu) so users get instant feedback on app launch.
+    createTray();
+  }
 
   if (!isAgentMode) {
     runtime.startManagedLocalRelayIfNeeded();
   }
 
   await runtime.start();
+  trayInteractive = true;
   if (!isAgentMode) {
-    createTray();
+    void refreshTrayMenu();
     const snapshot = await runtime.getAppSnapshot().catch(() => null);
     if (!snapshot || snapshot.onboardingStep < 5) {
       showMainWindow('onboarding');
