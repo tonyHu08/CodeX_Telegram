@@ -18,7 +18,7 @@ Target: validate "fresh install -> pair -> /threads -> bind -> remote ask -> fin
 - The relay injection endpoint (`POST /v1/bot/incoming`) is still useful as a fast regression test for the device outbound path.
 
 ## Environment
-- Desktop: Codex Bridge Desktop (packaged app in `/Applications`)
+- Desktop: CodeX Telegram (packaged app in `/Applications`)
 - Relay mode: local (`http://127.0.0.1:8787`)
 - Telegram bot: `@tony_test_2_bot`
 - Device binding:

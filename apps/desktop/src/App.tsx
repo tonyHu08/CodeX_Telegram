@@ -1014,7 +1014,7 @@ export function App() {
     <div className="shell">
       <header className="header">
         <div>
-          <h1>Codex Bridge Desktop</h1>
+          <h1>CodeX Telegram</h1>
           <p>{windowMode === 'onboarding' ? ui.appSubtitleOnboarding : ui.appSubtitleHome}</p>
         </div>
         <div className="header-right">

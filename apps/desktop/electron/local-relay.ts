@@ -1101,7 +1101,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
   });
 
   await app.listen({ host: options.host, port: options.port });
-  app.log.info({ host: options.host, port: options.port }, 'Codex Bridge local relay started');
+  app.log.info({ host: options.host, port: options.port }, 'CodeX Telegram local relay started');
 
   if (telegramBotToken) {
     telegramBot = new TelegramBotClient(telegramBotToken, app.log);

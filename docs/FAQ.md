@@ -2,19 +2,19 @@
 
 ## Is this just message forwarding?
 
-No. Codex Bridge binds to a **real Codex thread** on your Mac (via Codex App Server), so context stays consistent.
+No. CodeX Telegram binds to a **real Codex thread** on your Mac (via Codex App Server), so context stays consistent.
 
 ## What do I need to install?
 
 - Codex App (installed + logged in)
-- Codex Bridge Desktop (this project)
+- CodeX Telegram (this project)
 - Telegram
 
 No Node/Homebrew is required for end users.
 
 ## Does it read my prompts/files?
 
-Codex Bridge only receives what you send to the Telegram bot, and forwards it to your local Codex thread.
+CodeX Telegram only receives what you send to the Telegram bot, and forwards it to your local Codex thread.
 
 Please review:
 
@@ -31,7 +31,7 @@ Approvals are a **safety boundary**: you can confirm or deny from anywhere.
 
 Not reliably today.
 
-Codex Bridge can only observe tasks that **it started itself**. Codex currently does not expose a stable “thread is running” signal for arbitrary threads.
+CodeX Telegram can only observe tasks that **it started itself**. Codex currently does not expose a stable “thread is running” signal for arbitrary threads.
 
 ## Can it send/receive images?
 

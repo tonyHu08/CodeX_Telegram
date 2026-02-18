@@ -32,7 +32,7 @@ const LOCAL_RELAY_STORE_PATH = path.join(dataRoot(), 'data', 'local-relay-store.
 const RELAY_CONFIG_PATH = path.join(dataRoot(), 'relay-config.json');
 const LOCAL_RELAY_HOST = '127.0.0.1';
 const LOCAL_RELAY_PORT = 8787;
-const FEEDBACK_ISSUES_URL = process.env.CB_FEEDBACK_ISSUES_URL || 'https://github.com/tonyHu08/CodeX_Bridge/issues';
+const FEEDBACK_ISSUES_URL = process.env.CB_FEEDBACK_ISSUES_URL || 'https://github.com/tonyHu08/CodeX_Telegram/issues';
 
 if (!process.env.CB_DEFAULT_RELAY_BASE_URL && app.isPackaged) {
   // Default to local relay for the open-source "local mode" product.
@@ -1327,7 +1327,7 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-    title: 'Codex Bridge Desktop',
+    title: 'CodeX Telegram',
   });
 
   const devServer = process.env.DESKTOP_DEV_SERVER;
@@ -1398,10 +1398,10 @@ async function refreshTrayMenu() {
   const fallbackLocale = readLocaleFallback();
   if (!trayInteractive || !runtimeRef) {
     setTrayIconState('offline');
-    tray.setToolTip(withLocale(fallbackLocale, 'Codex Bridge Desktop（正在启动）', 'Codex Bridge Desktop (starting)'));
+    tray.setToolTip(withLocale(fallbackLocale, 'CodeX Telegram（正在启动）', 'CodeX Telegram (starting)'));
     tray.setContextMenu(Menu.buildFromTemplate([
       {
-        label: 'Codex Bridge Desktop',
+        label: 'CodeX Telegram',
         enabled: false,
       },
       {
@@ -1414,7 +1414,7 @@ async function refreshTrayMenu() {
       },
       { type: 'separator' },
       {
-        label: withLocale(fallbackLocale, '退出 Codex Bridge', 'Quit Codex Bridge'),
+        label: withLocale(fallbackLocale, '退出 CodeX Telegram', 'Quit CodeX Telegram'),
         click: () => {
           isQuitting = true;
           app.quit();
@@ -1428,7 +1428,7 @@ async function refreshTrayMenu() {
     setTrayIconState('offline');
     tray.setContextMenu(Menu.buildFromTemplate([
       {
-        label: 'Codex Bridge Desktop',
+        label: 'CodeX Telegram',
         click: () => showMainWindow('advanced'),
       },
       {
@@ -1443,7 +1443,7 @@ async function refreshTrayMenu() {
         click: () => showMainWindow('advanced'),
       },
       {
-        label: withLocale(fallbackLocale, '退出 Codex Bridge', 'Quit Codex Bridge'),
+        label: withLocale(fallbackLocale, '退出 CodeX Telegram', 'Quit CodeX Telegram'),
         click: () => {
           isQuitting = true;
           app.quit();
@@ -1469,7 +1469,7 @@ async function refreshTrayMenu() {
 
   const menu = Menu.buildFromTemplate([
     {
-      label: 'Codex Bridge Desktop',
+      label: 'CodeX Telegram',
       click: () => showMainWindow(defaultMode),
     },
     {
@@ -1506,7 +1506,7 @@ async function refreshTrayMenu() {
     },
     { type: 'separator' },
     {
-      label: withLocale(locale, '退出 Codex Bridge', 'Quit Codex Bridge'),
+      label: withLocale(locale, '退出 CodeX Telegram', 'Quit CodeX Telegram'),
       click: () => {
         isQuitting = true;
         app.quit();
@@ -1514,7 +1514,7 @@ async function refreshTrayMenu() {
     },
   ]);
 
-  tray.setToolTip(withLocale(locale, 'Codex Bridge Desktop（手机远程）', 'Codex Bridge Desktop (mobile remote)'));
+  tray.setToolTip(withLocale(locale, 'CodeX Telegram（手机远程）', 'CodeX Telegram (mobile remote)'));
   tray.setContextMenu(menu);
 }
 

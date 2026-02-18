@@ -439,7 +439,7 @@ async function main() {
   const host = process.env.HOST || '127.0.0.1';
 
   await app.listen({ port, host });
-  app.log.info({ host, port }, 'Codex Bridge cloud-relay started');
+  app.log.info({ host, port }, 'CodeX Telegram cloud-relay started');
 }
 
 void main().catch((error) => {

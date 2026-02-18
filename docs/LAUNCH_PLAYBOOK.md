@@ -1,6 +1,6 @@
 # Launch Playbook (Bilingual)
 
-This playbook helps you launch Codex Bridge in English and Chinese channels in one week.
+This playbook helps you launch CodeX Telegram in English and Chinese channels in one week.
 
 ## 1. Positioning
 
@@ -31,21 +31,21 @@ Title:
 `Remote Codex from Telegram in 2 minutes (No CLI)`
 
 Body:
-`Codex Bridge lets you keep working on your local Codex thread from your phone. It supports thread-aware binding, remote approvals, queue status, and usage checks (/usage). Main setup path is no-CLI and takes about 2 minutes.`
+`CodeX Telegram lets you keep working on your local Codex thread from your phone. It supports thread-aware binding, remote approvals, queue status, and usage checks (/usage). Main setup path is no-CLI and takes about 2 minutes.`
 
 CTA:
-`Repo: https://github.com/tonyHu08/CodeX_Bridge`
+`Repo: https://github.com/tonyHu08/CodeX_Telegram`
 
 ### 掘金 / 少数派 / 即刻（ZH）
 
 标题：
-`2 分钟把 Codex 装进手机：Codex Bridge 开源了`
+`2 分钟把 Codex 装进手机：CodeX Telegram 开源了`
 
 正文：
-`Codex Bridge 让你在 Telegram 远程操控本机 Codex：可绑定具体线程、远程审批、查看状态和用量。默认主路径不需要命令行，2 分钟可完成安装到首条远程消息。`
+`CodeX Telegram 让你在 Telegram 远程操控本机 Codex：可绑定具体线程、远程审批、查看状态和用量。默认主路径不需要命令行，2 分钟可完成安装到首条远程消息。`
 
 CTA：
-`项目地址：https://github.com/tonyHu08/CodeX_Bridge`
+`项目地址：https://github.com/tonyHu08/CodeX_Telegram`
 
 ## 4. Weekly cadence
 

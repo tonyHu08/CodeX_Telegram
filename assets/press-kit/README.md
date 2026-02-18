@@ -1,4 +1,4 @@
-# Codex Bridge Press Kit
+# CodeX Telegram Press Kit
 
 Use these files when publishing product pages, social posts, and launch articles.
 
