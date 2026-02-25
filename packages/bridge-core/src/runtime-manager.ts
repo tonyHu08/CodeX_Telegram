@@ -1,6 +1,6 @@
 import type { Logger } from './logger';
 import { CodexAppServerClient } from './codex-app-server';
-import type { ApprovalRequestEvent } from './types';
+import type { ApprovalRequestEvent, UserInputRequestEvent } from './types';
 
 export class ThreadRuntimeManager {
   private readonly logger: Logger;
@@ -11,6 +11,7 @@ export class ThreadRuntimeManager {
   private readonly clients = new Map<string, CodexAppServerClient>();
   private readonly creating = new Map<string, Promise<CodexAppServerClient>>();
   private approvalHandler: ((event: ApprovalRequestEvent) => void) | null = null;
+  private userInputHandler: ((event: UserInputRequestEvent) => void) | null = null;
 
   constructor(options: {
     logger: Logger;
@@ -26,6 +27,10 @@ export class ThreadRuntimeManager {
 
   setApprovalHandler(handler: (event: ApprovalRequestEvent) => void): void {
     this.approvalHandler = handler;
+  }
+
+  setUserInputHandler(handler: (event: UserInputRequestEvent) => void): void {
+    this.userInputHandler = handler;
   }
 
   getExisting(threadId: string): CodexAppServerClient | null {
@@ -45,6 +50,48 @@ export class ThreadRuntimeManager {
         continue;
       }
       if (client.resolveApproval(approvalId, allow)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  resolveUserInput(
+    userInputRequestId: string,
+    answers: Record<string, unknown>,
+    preferredThreadId?: string,
+  ): boolean {
+    if (preferredThreadId) {
+      const preferred = this.clients.get(preferredThreadId);
+      if (preferred && preferred.resolveUserInput(userInputRequestId, answers)) {
+        return true;
+      }
+    }
+
+    for (const [threadId, client] of this.clients.entries()) {
+      if (preferredThreadId && threadId === preferredThreadId) {
+        continue;
+      }
+      if (client.resolveUserInput(userInputRequestId, answers)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  cancelUserInput(userInputRequestId: string, preferredThreadId?: string): boolean {
+    if (preferredThreadId) {
+      const preferred = this.clients.get(preferredThreadId);
+      if (preferred && preferred.cancelUserInput(userInputRequestId)) {
+        return true;
+      }
+    }
+
+    for (const [threadId, client] of this.clients.entries()) {
+      if (preferredThreadId && threadId === preferredThreadId) {
+        continue;
+      }
+      if (client.cancelUserInput(userInputRequestId)) {
         return true;
       }
     }
@@ -114,6 +161,11 @@ export class ThreadRuntimeManager {
     client.on('approval', (event: ApprovalRequestEvent) => {
       if (this.approvalHandler) {
         this.approvalHandler(event);
+      }
+    });
+    client.on('userInputRequested', (event: UserInputRequestEvent) => {
+      if (this.userInputHandler) {
+        this.userInputHandler(event);
       }
     });
 

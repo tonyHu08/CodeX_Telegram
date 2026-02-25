@@ -121,6 +121,30 @@ export interface ApprovalRequestEvent {
   rawParams: Record<string, unknown>;
 }
 
+export interface UserInputOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface UserInputQuestion {
+  id: string;
+  header?: string;
+  prompt: string;
+  allowMultiple: boolean;
+  allowTextInput: boolean;
+  options: UserInputOption[];
+}
+
+export interface UserInputRequestEvent {
+  userInputRequestId: string;
+  requestId: JsonRpcId;
+  threadId: string;
+  turnId: string;
+  questions: UserInputQuestion[];
+  rawParams: Record<string, unknown>;
+}
+
 export interface TurnExecutionResult {
   threadId: string;
   turnId: string;

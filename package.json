@@ -1,6 +1,6 @@
 {
   "name": "codex-telegram",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "license": "MIT",
   "description": "CodeX Telegram monorepo (bridge-core + desktop app + cloud relay)",

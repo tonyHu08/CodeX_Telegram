@@ -4,7 +4,11 @@ import process from 'node:process';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { BridgeDb } from './db';
-import { CodexAppServerClient } from './codex-app-server';
+import {
+  CodexAppServerClient,
+  type CollaborationModeMask,
+  type TurnCollaborationModePayload,
+} from './codex-app-server';
 import { createLogger, type Logger } from './logger';
 import { ThreadRuntimeManager } from './runtime-manager';
 import { runHealthChecks } from './health';
@@ -22,6 +26,8 @@ import type {
   ApprovalRequestEvent,
   RemoteBinding,
   ThreadListItem,
+  UserInputQuestion,
+  UserInputRequestEvent,
   TurnExecutionResult,
   TurnUserInput,
 } from './types';
@@ -54,8 +60,14 @@ const DEVICE_BINDING_PREFIX = 'device:';
 const THREAD_CACHE_TTL_MS = 10 * 60 * 1000;
 const THREAD_LIST_LIMIT = 20;
 const GLOBAL_STATE_CACHE_TTL_MS = 15_000;
+const COLLABORATION_MODE_CACHE_TTL_MS = 60_000;
+const CHAT_MODE_STATE_PREFIX = 'chat_mode:';
+const PLAN_INPUT_TIMEOUT_MS = 10 * 60 * 1000;
+const PLAN_CONFIRM_TIMEOUT_MS = 30 * 60 * 1000;
 const CODEX_GLOBAL_STATE_PATH = process.env.CODEX_GLOBAL_STATE_PATH
   || (process.env.HOME ? path.join(process.env.HOME, '.codex', '.codex-global-state.json') : '');
+
+type ChatModeOverride = 'plan' | 'code';
 
 interface ResolvedBridgeAgentOptions {
   deviceId: string;
@@ -108,6 +120,45 @@ interface ThreadConversationSnapshot {
   lastAssistant: string;
   recentTurns: TurnConversationSummary[];
   degraded?: boolean;
+  degradedReason?: string;
+}
+
+interface ThreadReadWithDegradeResult {
+  thread: ThreadSummary;
+  degraded: boolean;
+  degradedReason?: string;
+}
+
+interface TurnModeResolution {
+  override: ChatModeOverride;
+  payload: TurnCollaborationModePayload | null;
+  warningText: string | null;
+}
+
+interface PendingPlanInputSession {
+  sessionId: string;
+  userInputRequestId: string;
+  chatId: string;
+  messageId: string;
+  threadId: string;
+  turnId: string;
+  questions: UserInputQuestion[];
+  currentIndex: number;
+  answers: Record<string, unknown>;
+  multiSelections: Record<string, Set<string>>;
+  awaitingTextQuestionId: string | null;
+  createdAt: number;
+  expiresAt: number;
+}
+
+interface PendingPlanConfirmation {
+  token: string;
+  chatId: string;
+  messageId: string;
+  threadId: string;
+  planText: string;
+  createdAt: number;
+  expiresAt: number;
 }
 
 interface CodexSidebarMetadataCache {
@@ -511,7 +562,9 @@ function buildMainReplyKeyboard(): Record<string, unknown> {
       [{ text: '/threads' }, { text: '/bind latest' }],
       [{ text: '/usage' }, { text: '/status' }],
       [{ text: '/active' }, { text: '/current' }],
-      [{ text: '/detail' }, { text: '/cancel' }],
+      [{ text: '/plan on' }, { text: '/plan off' }],
+      [{ text: '/plan status' }, { text: '/cancel' }],
+      [{ text: '/detail' }],
       [{ text: '/unbind' }],
     ],
     resize_keyboard: true,
@@ -802,6 +855,12 @@ export class BridgeAgent extends EventEmitter {
   private readonly queuedByThread = new Map<string, IncomingUserMessageEvent>();
   private readonly cancelRequestedByThread = new Set<string>();
   private readonly recentThreadsByChat = new Map<string, { threads: ThreadSummary[]; updatedAt: number }>();
+  private readonly pendingPlanInputByChat = new Map<string, PendingPlanInputSession>();
+  private readonly pendingPlanInputBySessionId = new Map<string, PendingPlanInputSession>();
+  private readonly pendingPlanConfirmByChat = new Map<string, PendingPlanConfirmation>();
+  private readonly pendingPlanConfirmByToken = new Map<string, PendingPlanConfirmation>();
+  private readonly oneShotModeByChat = new Map<string, ChatModeOverride>();
+  private collaborationModesCache: { loadedAt: number; modes: CollaborationModeMask[] } | null = null;
 
   private shouldRetryAfterRuntimeError(message: string): boolean {
     return /app-server stopped|app-server exited|app-server is not running|not running|stdin is not writable|runtime unresponsive|stream disconnected/i.test(
@@ -844,6 +903,9 @@ export class BridgeAgent extends EventEmitter {
 
     this.runtimeManager.setApprovalHandler((event) => {
       void this.handleApproval(event);
+    });
+    this.runtimeManager.setUserInputHandler((event) => {
+      void this.handleUserInputRequest(event);
     });
   }
 
@@ -981,6 +1043,7 @@ export class BridgeAgent extends EventEmitter {
   }
 
   async handleIncomingMessage(event: IncomingUserMessageEvent): Promise<void> {
+    this.cleanupExpiredPlanState();
     const fallbackCommand = this.parseControlCommandFromText(event.text);
     if (fallbackCommand) {
       await this.handleControlCommand({
@@ -994,6 +1057,13 @@ export class BridgeAgent extends EventEmitter {
       });
       return;
     }
+
+    if (await this.tryConsumePlanTextAnswer(event)) {
+      return;
+    }
+
+    // User sent a new free-form message, clear stale "plan confirmation" card for this chat.
+    this.clearPlanConfirmationForChat(event.chatId);
 
     if (isLikelyImageGenerationRequest(event.text)) {
       this.emitOutbound({
@@ -1177,6 +1247,9 @@ export class BridgeAgent extends EventEmitter {
     if (name === 'usage' || name === 'limits') {
       return { command: 'usage', args };
     }
+    if (name === 'plan') {
+      return { command: 'plan', args };
+    }
     if (name === 'unbind') {
       return { command: 'unbind', args };
     }
@@ -1213,6 +1286,9 @@ export class BridgeAgent extends EventEmitter {
         case 'usage':
           await this.handleUsageCommand(event);
           return;
+        case 'plan':
+          await this.handlePlanCommand(event);
+          return;
         case 'unbind':
           this.db.deleteBinding(this.bindingChatId());
           this.emitFinal(event.chatId, event.messageId, this.t('已解绑当前会话。', 'Current thread unbound.'), {
@@ -1247,7 +1323,796 @@ export class BridgeAgent extends EventEmitter {
     return ok;
   }
 
+  private cleanupExpiredPlanState(): void {
+    const now = nowMs();
+    for (const [chatId, session] of this.pendingPlanInputByChat.entries()) {
+      if (session.expiresAt > now) {
+        continue;
+      }
+      this.pendingPlanInputByChat.delete(chatId);
+      this.pendingPlanInputBySessionId.delete(session.sessionId);
+      this.runtimeManager.cancelUserInput(session.userInputRequestId, session.threadId);
+    }
+
+    for (const [chatId, confirm] of this.pendingPlanConfirmByChat.entries()) {
+      if (confirm.expiresAt > now) {
+        continue;
+      }
+      this.pendingPlanConfirmByChat.delete(chatId);
+      this.pendingPlanConfirmByToken.delete(confirm.token);
+    }
+  }
+
+  private clearPlanInputSession(session: PendingPlanInputSession): void {
+    this.pendingPlanInputByChat.delete(session.chatId);
+    this.pendingPlanInputBySessionId.delete(session.sessionId);
+  }
+
+  private clearPlanConfirmationForChat(chatId: string): void {
+    const existing = this.pendingPlanConfirmByChat.get(chatId);
+    if (!existing) {
+      return;
+    }
+    this.pendingPlanConfirmByChat.delete(chatId);
+    this.pendingPlanConfirmByToken.delete(existing.token);
+  }
+
+  private getPlanQuestion(session: PendingPlanInputSession): UserInputQuestion | null {
+    const question = session.questions[session.currentIndex];
+    if (!question) {
+      return null;
+    }
+    return question;
+  }
+
+  private buildPlanQuestionKeyboard(session: PendingPlanInputSession, question: UserInputQuestion): Record<string, unknown> {
+    const inlineRows: Array<Array<{ text: string; callback_data: string }>> = [];
+    question.options.forEach((option, optionIndex) => {
+      const selected = session.multiSelections[question.id]?.has(option.id) ? '✅ ' : '';
+      inlineRows.push([{
+        text: `${selected}${truncate(compactText(option.label || option.id), 24)}`,
+        callback_data: `plan_a:${session.sessionId}:${session.currentIndex}:${optionIndex}`,
+      }]);
+    });
+
+    if (question.allowTextInput) {
+      inlineRows.push([{
+        text: this.t('✏️ 文本回答', '✏️ Answer in text'),
+        callback_data: `plan_t:${session.sessionId}:${session.currentIndex}`,
+      }]);
+    }
+    if (question.allowMultiple) {
+      inlineRows.push([{
+        text: this.t('✅ 提交本题', '✅ Submit this question'),
+        callback_data: `plan_s:${session.sessionId}:${session.currentIndex}`,
+      }]);
+    }
+    inlineRows.push([{
+      text: this.t('🛑 取消本次计划', '🛑 Cancel this plan'),
+      callback_data: `plan_x:${session.sessionId}`,
+    }]);
+    return { inline_keyboard: inlineRows };
+  }
+
+  private async sendPlanQuestion(session: PendingPlanInputSession): Promise<void> {
+    const question = this.getPlanQuestion(session);
+    if (!question) {
+      await this.submitPlanAnswers(session);
+      return;
+    }
+
+    const lines: string[] = [];
+    lines.push(this.t('📝 Plan 模式需要你确认', '📝 Plan mode needs your input'));
+    lines.push(this.locale === 'en'
+      ? `Question ${session.currentIndex + 1}/${session.questions.length}`
+      : `问题 ${session.currentIndex + 1}/${session.questions.length}`);
+    if (question.header) {
+      lines.push(this.locale === 'en'
+        ? `Topic: ${question.header}`
+        : `主题: ${question.header}`);
+    }
+    lines.push(question.prompt);
+
+    if (question.options.length > 0) {
+      lines.push('');
+      lines.push(this.t('可选项：', 'Options:'));
+      question.options.forEach((option, index) => {
+        lines.push(`${index + 1}. ${option.label}${option.description ? ` — ${option.description}` : ''}`);
+      });
+    }
+
+    if (question.allowMultiple) {
+      lines.push(this.t('本题支持多选，勾选后点击“提交本题”。', 'This question allows multiple choices. Select options then tap "Submit this question".'));
+    } else {
+      lines.push(this.t('本题单选，点一个选项即可继续。', 'Single-choice question. Tap one option to continue.'));
+    }
+    if (question.allowTextInput) {
+      lines.push(this.t('也可点“文本回答”，然后直接发送文本。', 'You can also tap "Answer in text", then send a text response.'));
+    }
+
+    this.emitFinal(session.chatId, session.messageId, lines.join('\n'), {
+      replyMarkup: this.buildPlanQuestionKeyboard(session, question),
+    });
+  }
+
+  private async submitPlanAnswers(session: PendingPlanInputSession): Promise<void> {
+    const answered = this.runtimeManager.resolveUserInput(
+      session.userInputRequestId,
+      session.answers,
+      session.threadId || undefined,
+    );
+    this.clearPlanInputSession(session);
+
+    if (!answered) {
+      this.emitFinal(
+        session.chatId,
+        session.messageId,
+        this.t('该计划问题已失效，请重新发起计划。', 'This plan prompt has expired. Please start planning again.'),
+        { replyMarkup: buildMainReplyKeyboard() },
+      );
+      return;
+    }
+
+    this.emitOutbound({
+      type: 'executionStatus',
+      chatId: session.chatId,
+      messageId: session.messageId,
+      status: 'running',
+      text: this.t('已收到你的选择，正在继续生成计划…', 'Received your choices. Continuing plan generation...'),
+      createdAt: nowMs(),
+    });
+  }
+
+  private async tryConsumePlanTextAnswer(event: IncomingUserMessageEvent): Promise<boolean> {
+    const session = this.pendingPlanInputByChat.get(event.chatId);
+    if (!session) {
+      return false;
+    }
+    this.cleanupExpiredPlanState();
+    if (!this.pendingPlanInputByChat.has(event.chatId)) {
+      return false;
+    }
+
+    const text = compactText(event.text || '');
+    const question = this.getPlanQuestion(session);
+    if (!question) {
+      return false;
+    }
+
+    // Text-mode answer explicitly requested by button flow.
+    if (session.awaitingTextQuestionId) {
+      if (!text) {
+        this.emitFinal(
+          event.chatId,
+          event.messageId,
+          this.t('请发送非空文本作为回答，或使用按钮取消。', 'Please send a non-empty text answer, or cancel using button.'),
+        );
+        return true;
+      }
+
+      const questionId = session.awaitingTextQuestionId;
+      session.awaitingTextQuestionId = null;
+      session.answers[questionId] = text;
+      session.currentIndex += 1;
+      await this.sendPlanQuestion(session);
+      return true;
+    }
+
+    // Fallback when inline buttons are unavailable on Telegram client.
+    if (!text) {
+      return true;
+    }
+
+    const optionCount = question.options.length;
+    const indexTokens = text
+      .split(/[,\s，、]+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    const allNumeric = indexTokens.length > 0 && indexTokens.every((token) => /^\d+$/.test(token));
+
+    if (optionCount > 0 && allNumeric) {
+      const indexes = indexTokens.map((token) => Number(token));
+      if (indexes.some((idx) => idx < 1 || idx > optionCount)) {
+        this.emitFinal(
+          event.chatId,
+          event.messageId,
+          this.locale === 'en'
+            ? `Invalid option index. Please send number 1-${optionCount}${question.allowMultiple ? ' (multi-select: e.g. "1 3")' : ''}.`
+            : `选项编号无效，请发送 1-${optionCount}${question.allowMultiple ? '（多选示例：1 3）' : ''}。`,
+        );
+        return true;
+      }
+
+      if (question.allowMultiple) {
+        const unique = Array.from(new Set(indexes));
+        session.answers[question.id] = unique.map((idx) => question.options[idx - 1]!.id);
+      } else {
+        session.answers[question.id] = question.options[indexes[0]! - 1]!.id;
+      }
+      session.currentIndex += 1;
+      await this.sendPlanQuestion(session);
+      return true;
+    }
+
+    if (optionCount > 0 && !question.allowTextInput) {
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.locale === 'en'
+          ? `Please answer with option number${question.allowMultiple ? 's' : ''} (1-${optionCount}).`
+          : `请使用选项编号作答${question.allowMultiple ? '（可多选）' : ''}，范围 1-${optionCount}。`,
+      );
+      return true;
+    }
+
+    if (question.allowTextInput) {
+      session.answers[question.id] = text;
+      session.currentIndex += 1;
+      await this.sendPlanQuestion(session);
+      return true;
+    }
+
+    if (!text) {
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.t('请发送非空文本作为回答，或使用按钮取消。', 'Please send a non-empty text answer, or cancel using button.'),
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  private async handleUserInputRequest(event: UserInputRequestEvent): Promise<void> {
+    this.cleanupExpiredPlanState();
+    const context = this.turnContextByThread.get(event.threadId);
+    let chatId = context?.chatId || '';
+    let messageId = context?.messageId || randomUUID();
+    if (!chatId) {
+      const binding = this.db.getBindingByThread(event.threadId);
+      if (binding) {
+        chatId = binding.chatId;
+      }
+    }
+
+    if (!chatId) {
+      this.logger.warn('Dropping request_user_input because chat context is missing', {
+        threadId: event.threadId,
+        turnId: event.turnId,
+      });
+      this.runtimeManager.cancelUserInput(event.userInputRequestId, event.threadId || undefined);
+      return;
+    }
+
+    const existing = this.pendingPlanInputByChat.get(chatId);
+    if (existing) {
+      this.runtimeManager.cancelUserInput(existing.userInputRequestId, existing.threadId || undefined);
+      this.clearPlanInputSession(existing);
+    }
+
+    const sessionId = randomUUID().replace(/-/g, '').slice(0, 12);
+    const normalizedQuestions = (event.questions.length > 0 ? event.questions : [{
+      id: 'q1',
+      prompt: this.t('请继续补充你的计划偏好。', 'Please provide additional planning preferences.'),
+      allowMultiple: false,
+      allowTextInput: true,
+      options: [],
+    }]).map((question) => {
+      if ((question.options?.length || 0) === 0 && !question.allowTextInput) {
+        return {
+          ...question,
+          allowTextInput: true,
+        };
+      }
+      return question;
+    });
+    const session: PendingPlanInputSession = {
+      sessionId,
+      userInputRequestId: event.userInputRequestId,
+      chatId,
+      messageId,
+      threadId: event.threadId,
+      turnId: event.turnId,
+      questions: normalizedQuestions,
+      currentIndex: 0,
+      answers: {},
+      multiSelections: {},
+      awaitingTextQuestionId: null,
+      createdAt: nowMs(),
+      expiresAt: nowMs() + PLAN_INPUT_TIMEOUT_MS,
+    };
+    this.pendingPlanInputByChat.set(chatId, session);
+    this.pendingPlanInputBySessionId.set(sessionId, session);
+    await this.sendPlanQuestion(session);
+  }
+
+  private async applyPlanConfirmationAction(
+    event: IncomingControlCommandEvent,
+    action: 'execute' | 'refine' | 'cancel',
+    tokenHint?: string,
+  ): Promise<boolean> {
+    const confirmation = tokenHint
+      ? this.pendingPlanConfirmByToken.get(tokenHint)
+      : this.pendingPlanConfirmByChat.get(event.chatId);
+    if (!confirmation || confirmation.chatId !== event.chatId) {
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.t('当前没有待确认的计划。请先发起一条 Plan 消息。', 'There is no pending plan confirmation. Start a Plan message first.'),
+      );
+      return true;
+    }
+
+    this.pendingPlanConfirmByToken.delete(confirmation.token);
+    this.pendingPlanConfirmByChat.delete(confirmation.chatId);
+
+    if (action === 'cancel') {
+      this.emitFinal(event.chatId, event.messageId, this.t('已取消本轮计划执行。', 'Plan execution cancelled.'), {
+        replyMarkup: buildMainReplyKeyboard(),
+      });
+      return true;
+    }
+
+    if (action === 'refine') {
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.t('好的，请继续补充要调整的部分，我会继续在 Plan 模式迭代。', 'Got it. Please send what to refine, and I will continue iterating in Plan mode.'),
+        { replyMarkup: buildMainReplyKeyboard() },
+      );
+      return true;
+    }
+
+    this.oneShotModeByChat.set(event.chatId, 'code');
+    this.emitFinal(
+      event.chatId,
+      event.messageId,
+      this.t('已确认执行，正在按 Code 模式开始实施。', 'Execution confirmed. Starting implementation in Code mode.'),
+      { replyMarkup: buildMainReplyKeyboard() },
+    );
+    const executeText = this.t(
+      `请基于以下已确认计划直接开始执行，不要再停留在计划阶段：\n\n${confirmation.planText}`,
+      `Execute directly based on this confirmed plan. Do not stay in planning mode:\n\n${confirmation.planText}`,
+    );
+    await this.handleIncomingMessage({
+      type: 'incomingUserMessage',
+      chatId: event.chatId,
+      messageId: randomUUID(),
+      text: executeText,
+      createdAt: nowMs(),
+    });
+    return true;
+  }
+
+  private async handlePlanCallback(event: IncomingControlCommandEvent, payload: string): Promise<boolean> {
+    const raw = String(payload || '').trim();
+    if (!raw) {
+      return false;
+    }
+
+    const parts = raw.split(':');
+    const kind = parts[0];
+    if (kind === 'plan_r') {
+      const session = this.pendingPlanInputBySessionId.get(parts[1] || '');
+      if (!session || session.chatId !== event.chatId) {
+        this.emitFinal(event.chatId, event.messageId, this.t('该题目已过期，请重新发起计划。', 'This question has expired. Please start planning again.'));
+        return true;
+      }
+      await this.sendPlanQuestion(session);
+      return true;
+    }
+
+    if (kind === 'plan_x') {
+      const session = this.pendingPlanInputBySessionId.get(parts[1] || '');
+      if (!session || session.chatId !== event.chatId) {
+        this.emitFinal(event.chatId, event.messageId, this.t('该计划已过期。', 'This plan has expired.'));
+        return true;
+      }
+      this.runtimeManager.cancelUserInput(session.userInputRequestId, session.threadId || undefined);
+      this.clearPlanInputSession(session);
+      this.emitFinal(event.chatId, event.messageId, this.t('已取消本次计划提问。', 'Plan questioning cancelled.'), {
+        replyMarkup: buildMainReplyKeyboard(),
+      });
+      return true;
+    }
+
+    if (kind === 'plan_a' || kind === 'plan_t' || kind === 'plan_s') {
+      const sessionId = parts[1] || '';
+      const questionIndex = Number(parts[2] || -1);
+      const session = this.pendingPlanInputBySessionId.get(sessionId);
+      if (!session || session.chatId !== event.chatId) {
+        this.emitFinal(event.chatId, event.messageId, this.t('该题目已过期，请重新发起计划。', 'This question has expired. Please start planning again.'));
+        return true;
+      }
+      const question = this.getPlanQuestion(session);
+      if (!question || questionIndex !== session.currentIndex) {
+        await this.sendPlanQuestion(session);
+        return true;
+      }
+
+      if (kind === 'plan_t') {
+        if (!question.allowTextInput) {
+          this.emitFinal(event.chatId, event.messageId, this.t('该题不支持文本输入，请使用按钮选择。', 'Text input is not enabled for this question.'));
+          return true;
+        }
+        session.awaitingTextQuestionId = question.id;
+        this.emitFinal(event.chatId, event.messageId, this.t('请直接发送你的文本回答。', 'Please send your text answer now.'));
+        return true;
+      }
+
+      if (kind === 'plan_a') {
+        const optionIndex = Number(parts[3] || -1);
+        const option = question.options[optionIndex];
+        if (!option) {
+          this.emitFinal(event.chatId, event.messageId, this.t('选项已失效，请重新选择。', 'Option expired. Please choose again.'));
+          return true;
+        }
+
+        if (question.allowMultiple) {
+          if (!session.multiSelections[question.id]) {
+            session.multiSelections[question.id] = new Set<string>();
+          }
+          const selected = session.multiSelections[question.id];
+          if (selected.has(option.id)) {
+            selected.delete(option.id);
+          } else {
+            selected.add(option.id);
+          }
+          await this.sendPlanQuestion(session);
+          return true;
+        }
+
+        session.answers[question.id] = option.id;
+        session.awaitingTextQuestionId = null;
+        session.currentIndex += 1;
+        await this.sendPlanQuestion(session);
+        return true;
+      }
+
+      if (kind === 'plan_s') {
+        if (!question.allowMultiple) {
+          this.emitFinal(event.chatId, event.messageId, this.t('该题无需提交，选择选项即可继续。', 'This question does not need submit; choosing one option continues.'));
+          return true;
+        }
+        const selected = session.multiSelections[question.id] || new Set<string>();
+        if (selected.size === 0) {
+          this.emitFinal(event.chatId, event.messageId, this.t('请至少选择一个选项再提交。', 'Please select at least one option before submit.'));
+          return true;
+        }
+        session.answers[question.id] = Array.from(selected.values());
+        session.awaitingTextQuestionId = null;
+        session.currentIndex += 1;
+        await this.sendPlanQuestion(session);
+        return true;
+      }
+    }
+
+    if (kind === 'plan_e' || kind === 'plan_f' || kind === 'plan_c') {
+      const token = parts[1] || '';
+      if (kind === 'plan_c') {
+        return await this.applyPlanConfirmationAction(event, 'cancel', token);
+      }
+
+      if (kind === 'plan_f') {
+        return await this.applyPlanConfirmationAction(event, 'refine', token);
+      }
+
+      return await this.applyPlanConfirmationAction(event, 'execute', token);
+    }
+
+    return false;
+  }
+
+  private chatModeStateKey(chatId: string): string {
+    return `${CHAT_MODE_STATE_PREFIX}${chatId}`;
+  }
+
+  private getChatModeOverride(chatId: string): ChatModeOverride | null {
+    const raw = (this.db.getState(this.chatModeStateKey(chatId)) || '').trim().toLowerCase();
+    if (raw === 'plan' || raw === 'code') {
+      return raw;
+    }
+    return null;
+  }
+
+  private setChatModeOverride(chatId: string, mode: ChatModeOverride): void {
+    this.db.setState(this.chatModeStateKey(chatId), mode, nowMs());
+  }
+
+  private modeLabel(mode: ChatModeOverride): string {
+    return mode === 'plan' ? 'Plan' : 'Code';
+  }
+
+  private isCollaborationModeListUnsupportedError(message: string): boolean {
+    const normalized = (message || '').trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    if (normalized.includes('collaborationmode/list')) {
+      return /method not found|unsupported|unknown|unrecognized|not implemented/.test(normalized);
+    }
+    if (!normalized.includes('collaboration')) {
+      return false;
+    }
+    return /method not found|unsupported|unknown|unrecognized|not implemented/.test(normalized);
+  }
+
+  private buildTurnCollaborationModePayload(mode: CollaborationModeMask): TurnCollaborationModePayload {
+    const settings: TurnCollaborationModePayload['settings'] = {};
+    settings.model = mode.model || this.options.fallbackModel;
+    if (mode.reasoningEffort) {
+      settings.reasoning_effort = mode.reasoningEffort;
+    }
+    if (mode.developerInstructions) {
+      settings.developer_instructions = mode.developerInstructions;
+    }
+    return {
+      mode: mode.wireMode,
+      settings,
+    };
+  }
+
+  private async listCollaborationModes(forceRefresh = false): Promise<CollaborationModeMask[]> {
+    const now = nowMs();
+    if (
+      !forceRefresh
+      && this.collaborationModesCache
+      && now - this.collaborationModesCache.loadedAt <= COLLABORATION_MODE_CACHE_TTL_MS
+    ) {
+      return this.collaborationModesCache.modes;
+    }
+
+    const control = await this.getControlClient();
+    const modes = await withTimeout(
+      control.listCollaborationModes(),
+      Math.min(this.options.requestTimeoutMs, 10_000),
+      'collaborationMode/list',
+    );
+    this.collaborationModesCache = {
+      loadedAt: now,
+      modes,
+    };
+    return modes;
+  }
+
+  private async resolveTurnModeForMessage(chatId: string): Promise<TurnModeResolution | null> {
+    const oneShot = this.oneShotModeByChat.get(chatId);
+    if (oneShot) {
+      this.oneShotModeByChat.delete(chatId);
+    }
+    const override = oneShot || this.getChatModeOverride(chatId);
+    if (!override) {
+      return null;
+    }
+
+    try {
+      const modes = await this.listCollaborationModes();
+      const matched = modes.find((mode) => mode.mode === override);
+      if (!matched) {
+        return {
+          override,
+          payload: null,
+          warningText: this.locale === 'en'
+            ? `${this.modeLabel(override)} mode is not supported by current Codex version. Falling back to default mode for this message.`
+            : `当前 Codex 版本不支持 ${this.modeLabel(override)} 模式，本条消息已按默认模式继续。`,
+        };
+      }
+      return {
+        override,
+        payload: this.buildTurnCollaborationModePayload(matched),
+        warningText: null,
+      };
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      this.logger.warn('Failed to resolve collaboration mode for turn; fallback to default turn mode', {
+        chatId,
+        override,
+        error: message,
+      });
+      const unsupported = this.isCollaborationModeListUnsupportedError(message);
+      return {
+        override,
+        payload: null,
+        warningText: unsupported
+          ? this.t(
+            '当前 Codex 版本不支持原生 Plan/Code 模式切换，本条消息已按默认模式继续。',
+            'Current Codex version does not support native Plan/Code mode switching. This message continues with default mode.',
+          )
+          : this.t(
+            `${this.modeLabel(override)} 模式暂时不可用，本条消息已按默认模式继续。`,
+            `${this.modeLabel(override)} mode is temporarily unavailable. This message continues with default mode.`,
+          ),
+      };
+    }
+  }
+
+  private async handlePlanCommand(event: IncomingControlCommandEvent): Promise<void> {
+    this.cleanupExpiredPlanState();
+    const args = String(event.args || '').trim();
+    const [firstToken, ...restTokens] = args.split(/\s+/).filter(Boolean);
+    const action = String(firstToken || '').toLowerCase();
+
+    if ((action === 'callback' || action === 'cb') && restTokens.length > 0) {
+      const handled = await this.handlePlanCallback(event, restTokens.join(' '));
+      if (!handled) {
+        this.emitFinal(event.chatId, event.messageId, this.t('该按钮已失效，请重试 /plan status。', 'This button expired. Please retry /plan status.'));
+      }
+      return;
+    }
+
+    if (action === 'on') {
+      let modes: CollaborationModeMask[] = [];
+      try {
+        modes = await this.listCollaborationModes(true);
+      } catch (error: any) {
+        const message = error?.message || String(error);
+        const unsupported = this.isCollaborationModeListUnsupportedError(message);
+        this.emitFinal(
+          event.chatId,
+          event.messageId,
+          unsupported
+            ? this.t(
+              '当前 Codex 版本不支持原生 Plan mode。',
+              'Current Codex version does not support native Plan mode.',
+            )
+            : this.locale === 'en'
+              ? `Plan mode probe failed, please retry later: ${message}`
+              : `Plan mode 探测失败，请稍后重试：${message}`,
+          { replyMarkup: buildMainReplyKeyboard() },
+        );
+        return;
+      }
+
+      const planMode = modes.find((mode) => mode.mode === 'plan');
+      if (!planMode) {
+        this.emitFinal(
+          event.chatId,
+          event.messageId,
+          this.t('当前 Codex 版本不支持原生 Plan mode。', 'Current Codex version does not support native Plan mode.'),
+          { replyMarkup: buildMainReplyKeyboard() },
+        );
+        return;
+      }
+
+      this.setChatModeOverride(event.chatId, 'plan');
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.t(
+          '已切换为 Plan mode。\n后续消息会按原生 Plan 模式执行。\n可用：/plan status 或 /plan off',
+          'Switched to Plan mode.\nFollowing messages will run with native Plan mode.\nAvailable: /plan status or /plan off',
+        ),
+        { replyMarkup: buildMainReplyKeyboard() },
+      );
+      return;
+    }
+
+    if (action === 'off') {
+      const pendingPlanInput = this.pendingPlanInputByChat.get(event.chatId);
+      if (pendingPlanInput) {
+        this.runtimeManager.cancelUserInput(pendingPlanInput.userInputRequestId, pendingPlanInput.threadId || undefined);
+        this.clearPlanInputSession(pendingPlanInput);
+      }
+      this.clearPlanConfirmationForChat(event.chatId);
+      this.setChatModeOverride(event.chatId, 'code');
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        this.t(
+          '已切换为 Code 模式。\n后续消息会按原生 Code 模式执行；若当前版本不支持将自动降级。',
+          'Switched to Code mode.\nFollowing messages will run with native Code mode; if unsupported, it will degrade automatically.',
+        ),
+        { replyMarkup: buildMainReplyKeyboard() },
+      );
+      return;
+    }
+
+    if (action === 'execute' || action === 'confirm' || action === 'run') {
+      await this.applyPlanConfirmationAction(event, 'execute');
+      return;
+    }
+
+    if (action === 'refine' || action === 'edit' || action === 'continue') {
+      await this.applyPlanConfirmationAction(event, 'refine');
+      return;
+    }
+
+    if (action === 'cancel' || action === 'abort') {
+      await this.applyPlanConfirmationAction(event, 'cancel');
+      return;
+    }
+
+    if (action === 'status') {
+      const override = this.getChatModeOverride(event.chatId);
+      const pendingInput = this.pendingPlanInputByChat.get(event.chatId);
+      const pendingConfirm = this.pendingPlanConfirmByChat.get(event.chatId);
+      const lines: string[] = [
+        this.t('🧭 模式状态', '🧭 Mode status'),
+        this.locale === 'en'
+          ? `Current override: ${override ? this.modeLabel(override) : 'default (none)'}`
+          : `当前覆盖模式: ${override ? this.modeLabel(override) : '默认（未设置）'}`,
+      ];
+      if (pendingInput) {
+        lines.push(this.locale === 'en'
+          ? `Pending questions: Q${pendingInput.currentIndex + 1}/${pendingInput.questions.length}`
+          : `待回答问题: 第 ${pendingInput.currentIndex + 1}/${pendingInput.questions.length} 题`);
+      } else {
+        lines.push(this.t('待回答问题: 无', 'Pending questions: none'));
+      }
+      lines.push(pendingConfirm
+        ? this.t('计划确认: 待确认执行', 'Plan confirmation: waiting for execution confirm')
+        : this.t('计划确认: 无', 'Plan confirmation: none'));
+      try {
+        const modes = await this.listCollaborationModes();
+        const hasPlan = modes.some((mode) => mode.mode === 'plan');
+        const hasCode = modes.some((mode) => mode.mode === 'code');
+        lines.push(
+          this.locale === 'en'
+            ? `Native support: Plan ${hasPlan ? '✅' : '❌'} / Code ${hasCode ? '✅' : '❌'}`
+            : `原生支持: Plan ${hasPlan ? '✅' : '❌'} / Code ${hasCode ? '✅' : '❌'}`,
+        );
+      } catch (error: any) {
+        const message = error?.message || String(error);
+        const unsupported = this.isCollaborationModeListUnsupportedError(message);
+        lines.push(
+          unsupported
+            ? this.t('原生模式列表: 当前版本不支持。', 'Native mode list: unsupported by current version.')
+            : this.locale === 'en'
+              ? `Native mode list: unavailable (${truncate(message, 120)})`
+              : `原生模式列表: 暂不可用（${truncate(message, 120)}）`,
+        );
+      }
+      lines.push(this.t('可用: /plan on | /plan off | /plan execute | /plan refine | /plan cancel', 'Available: /plan on | /plan off | /plan execute | /plan refine | /plan cancel'));
+
+      const inlineRows: Array<Array<{ text: string; callback_data: string }>> = [];
+      if (pendingInput) {
+        inlineRows.push([{
+          text: this.t('继续答题', 'Continue questions'),
+          callback_data: `plan_r:${pendingInput.sessionId}`,
+        }]);
+      }
+      if (pendingConfirm) {
+        inlineRows.push(
+          [{ text: this.t('✅ 确认并执行', '✅ Execute plan'), callback_data: `plan_e:${pendingConfirm.token}` }],
+          [{ text: this.t('✏️ 继续改计划', '✏️ Refine plan'), callback_data: `plan_f:${pendingConfirm.token}` }],
+          [{ text: this.t('🛑 取消本轮', '🛑 Cancel'), callback_data: `plan_c:${pendingConfirm.token}` }],
+        );
+      }
+      this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
+        replyMarkup: buildMainReplyKeyboard(),
+      });
+      if (inlineRows.length > 0) {
+        this.emitFinal(event.chatId, event.messageId, this.t('可点下方按钮继续。', 'Use buttons below to continue.'), {
+          replyMarkup: {
+            inline_keyboard: inlineRows,
+          },
+        });
+      }
+      return;
+    }
+
+    this.emitFinal(
+      event.chatId,
+      event.messageId,
+      this.t(
+        '用法: /plan on | /plan off | /plan status | /plan execute | /plan refine | /plan cancel',
+        'Usage: /plan on | /plan off | /plan status | /plan execute | /plan refine | /plan cancel',
+      ),
+      {
+        replyMarkup: buildMainReplyKeyboard(),
+      },
+    );
+  }
+
   private async handleCancelCommand(event: IncomingControlCommandEvent): Promise<void> {
+    const pendingPlanInput = this.pendingPlanInputByChat.get(event.chatId);
+    if (pendingPlanInput) {
+      this.runtimeManager.cancelUserInput(pendingPlanInput.userInputRequestId, pendingPlanInput.threadId || undefined);
+      this.clearPlanInputSession(pendingPlanInput);
+    }
+    this.clearPlanConfirmationForChat(event.chatId);
+
     const binding = this.getBinding();
     if (!binding) {
       this.emitFinal(event.chatId, event.messageId, this.t('当前未绑定会话，无法终止任务。', 'No bound thread. Unable to cancel tasks.'));
@@ -1301,6 +2166,7 @@ export class BridgeAgent extends EventEmitter {
   private async processMessage(threadId: string, event: IncomingUserMessageEvent): Promise<void> {
     const startedAt = Date.now();
     const turnInput = buildTurnInputs(event, this.locale);
+    const turnModeResolution = await this.resolveTurnModeForMessage(event.chatId);
     this.turnContextByThread.set(threadId, {
       chatId: event.chatId,
       messageId: event.messageId,
@@ -1314,6 +2180,16 @@ export class BridgeAgent extends EventEmitter {
       text: this.t('已接收，正在让 Codex 处理…', 'Received, processing with Codex...'),
       createdAt: Date.now(),
     });
+    if (turnModeResolution?.warningText) {
+      this.emitOutbound({
+        type: 'executionStatus',
+        chatId: event.chatId,
+        messageId: event.messageId,
+        status: 'running',
+        text: turnModeResolution.warningText,
+        createdAt: Date.now(),
+      });
+    }
 
     const heartbeat = setInterval(() => {
       this.emitOutbound({
@@ -1365,7 +2241,16 @@ export class BridgeAgent extends EventEmitter {
       try {
         const result = await withAttemptTimeout((async () => {
           const runtime = await this.runtimeManager.getOrCreate(threadId);
-          return await runtime.runTurn(threadId, turnInput, perAttemptTurnTimeoutMs);
+          return await runtime.runTurn(
+            threadId,
+            turnInput,
+            perAttemptTurnTimeoutMs,
+            turnModeResolution?.payload
+              ? {
+                collaborationMode: turnModeResolution.payload,
+              }
+              : undefined,
+          );
         })());
         this.logger.info('Turn attempt finished', {
           threadId,
@@ -1455,6 +2340,43 @@ export class BridgeAgent extends EventEmitter {
         createdAt: Date.now(),
       });
 
+      if (turnModeResolution?.override === 'plan') {
+        const token = randomUUID().replace(/-/g, '').slice(0, 12);
+        this.clearPlanConfirmationForChat(event.chatId);
+        const confirmation: PendingPlanConfirmation = {
+          token,
+          chatId: event.chatId,
+          messageId: event.messageId,
+          threadId,
+          planText: result.finalText || 'OK',
+          createdAt: nowMs(),
+          expiresAt: nowMs() + PLAN_CONFIRM_TIMEOUT_MS,
+        };
+        this.pendingPlanConfirmByChat.set(event.chatId, confirmation);
+        this.pendingPlanConfirmByToken.set(token, confirmation);
+        this.emitOutbound({
+          type: 'finalResponse',
+          chatId: event.chatId,
+          messageId: event.messageId,
+          text: `${result.finalText || 'OK'}\n\n${this.t(
+            '——\n请确认下一步：\n• /plan execute  确认并执行\n• /plan refine  继续改计划\n• /plan cancel  取消本轮',
+            '--\nConfirm next step:\n• /plan execute  execute plan\n• /plan refine  keep refining plan\n• /plan cancel  cancel this plan',
+          )}`,
+          purpose: 'turn',
+          options: {
+            replyMarkup: {
+              inline_keyboard: [
+                [{ text: this.t('✅ 确认并执行', '✅ Execute plan'), callback_data: `plan_e:${token}` }],
+                [{ text: this.t('✏️ 继续改计划', '✏️ Refine plan'), callback_data: `plan_f:${token}` }],
+                [{ text: this.t('🛑 取消本轮', '🛑 Cancel'), callback_data: `plan_c:${token}` }],
+              ],
+            },
+          },
+          createdAt: Date.now(),
+        });
+        return;
+      }
+
       this.emitOutbound({
         type: 'finalResponse',
         chatId: event.chatId,
@@ -1498,6 +2420,7 @@ export class BridgeAgent extends EventEmitter {
             '/bind latest - bind latest thread',
             '/bind <threadId|index> - bind by id (or legacy index)',
             '/usage (or /limits) - show Codex rate limits remaining',
+            '/plan on|off|status - switch or check native Plan mode',
             '/active - quick view of active conversation thread',
             '/detail <index|threadId|current|latest> - view details (source/ID/CWD)',
             '/current - show latest snapshot of bound thread',
@@ -1512,6 +2435,7 @@ export class BridgeAgent extends EventEmitter {
             '/bind latest - 绑定最新会话',
             '/bind <threadId|编号> - 按 ID（或兼容旧编号）绑定',
             '/usage（或 /limits）- 查看 Codex 剩余用量',
+            '/plan on|off|status - 切换或查看原生 Plan 模式',
             '/active - 快速查看当前正在对话的会话',
             '/detail <编号|threadId|current|latest> - 查看会话详情（来源/ID/CWD）',
             '/current - 查看当前绑定会话的最近对话快照',
@@ -1850,7 +2774,6 @@ export class BridgeAgent extends EventEmitter {
   private async handleDetailCommand(event: IncomingControlCommandEvent): Promise<void> {
     const arg = (event.args || '').trim() || 'current';
     const binding = this.getBinding();
-    const control = await this.getControlClient();
     let targetThreadId = '';
 
     if (arg === 'current') {
@@ -1860,6 +2783,7 @@ export class BridgeAgent extends EventEmitter {
       }
       targetThreadId = binding.threadId;
     } else if (arg === 'latest') {
+      const control = await this.getControlClient();
       const latest = await control.listThreads(THREAD_LIST_LIMIT);
       const state = this.buildDisplayThreadsState(event.chatId, latest);
       const preferred = this.pickPreferredLatestThread(state.displayItems.map((item) => item.thread));
@@ -1884,36 +2808,8 @@ export class BridgeAgent extends EventEmitter {
       targetThreadId = arg;
     }
 
-    let readResult: Awaited<ReturnType<CodexAppServerClient['readThread']>>;
-    try {
-      readResult = await withTimeout(
-        control.readThread(targetThreadId),
-        Math.min(this.options.requestTimeoutMs, 10_000),
-        'thread/read',
-      );
-    } catch (error: any) {
-      this.emitFinal(
-        event.chatId,
-        event.messageId,
-        this.locale === 'en'
-          ? `❌ Failed to read thread details\n${error?.message || String(error)}`
-          : `❌ 读取会话详情失败\n${error?.message || String(error)}`,
-      );
-      return;
-    }
-
-    if (!readResult?.thread?.id) {
-      this.emitFinal(event.chatId, event.messageId, this.locale === 'en' ? `Thread not found: ${targetThreadId}` : `未找到会话：${targetThreadId}`);
-      return;
-    }
-
-    const thread: ThreadSummary = {
-      id: String(readResult.thread.id || targetThreadId),
-      preview: sanitizePreview(String(readResult.thread.preview || '')),
-      updatedAt: Number(readResult.thread.updatedAt || 0),
-      cwd: readResult.thread.cwd == null ? null : String(readResult.thread.cwd),
-      source: sourceLabel(String(readResult.thread.source || 'unknown')),
-    };
+    const readResult = await this.readThreadSummaryWithDegrade(targetThreadId, 'detail');
+    const thread = readResult.thread;
 
     const metadata = loadCodexSidebarMetadata(this.logger);
     const title = resolveThreadTitle(thread, 0, metadata, this.locale);
@@ -1936,6 +2832,14 @@ export class BridgeAgent extends EventEmitter {
     if (thread.preview) {
       lines.push(this.locale === 'en' ? `Preview: ${escapeTelegramHtml(truncate(thread.preview, 200))}` : `预览: ${escapeTelegramHtml(truncate(thread.preview, 200))}`);
     }
+    if (readResult.degraded) {
+      lines.push(this.t('注: 当前会话较大或较忙，详情已降级为基础元数据。', 'Note: thread is large or busy; detail was degraded to basic metadata.'));
+      if (readResult.degradedReason) {
+        lines.push(this.locale === 'en'
+          ? `Reason: ${escapeTelegramHtml(truncate(readResult.degradedReason, 200))}`
+          : `原因: ${escapeTelegramHtml(truncate(readResult.degradedReason, 200))}`);
+      }
+    }
     lines.push(this.t('可用: /bind [编号|threadId] 绑定该会话', 'Available: /bind [index|threadId] to bind this thread'));
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
@@ -1944,40 +2848,204 @@ export class BridgeAgent extends EventEmitter {
     });
   }
 
-  private async fetchThreadConversationSnapshot(threadId: string): Promise<ThreadConversationSnapshot | null> {
-    const control = await this.getControlClient();
+  private composeDegradedReason(reasons: string[]): string | undefined {
+    const compact = reasons
+      .map((item) => compactText(item || ''))
+      .filter(Boolean);
+    if (compact.length === 0) {
+      return undefined;
+    }
+    return truncate(Array.from(new Set(compact)).join(' | '), 260);
+  }
+
+  private minimalThreadSummary(threadId: string): ThreadSummary {
+    return {
+      id: threadId,
+      preview: '',
+      updatedAt: 0,
+      cwd: null,
+      source: 'unknown',
+    };
+  }
+
+  private threadSummaryFromReadResult(read: Awaited<ReturnType<CodexAppServerClient['readThread']>>, fallbackThreadId: string): ThreadSummary {
+    return {
+      id: String(read.thread.id || fallbackThreadId),
+      preview: sanitizePreview(String(read.thread.preview || '')),
+      updatedAt: Number(read.thread.updatedAt || 0),
+      cwd: read.thread.cwd == null ? null : String(read.thread.cwd),
+      source: sourceLabel(String(read.thread.source || 'unknown')),
+    };
+  }
+
+  private async readThreadSummaryWithDegrade(threadId: string, scene: string): Promise<ThreadReadWithDegradeResult> {
+    const stageTimeout = (ms: number): number => Math.max(this.options.requestTimeoutMs, ms);
+    const reasons: string[] = [];
+    let control: CodexAppServerClient;
     try {
-      const payload = await withTimeout(
-        control.request<unknown>('thread/read', {
-          threadId,
-          includeTurns: true,
-        }),
-        Math.min(this.options.requestTimeoutMs, 25_000),
-        'thread/read(includeTurns=true)',
-      );
-      const parsed = parseThreadConversationSnapshot(payload);
-      if (parsed) {
-        return parsed;
-      }
-      throw new Error('thread/read(includeTurns=true) returned unparseable payload');
+      control = await this.getControlClient();
     } catch (error: any) {
-      this.logger.warn('Failed to fetch thread snapshot with turns; falling back to basic thread/read', {
+      const message = error?.message || String(error);
+      this.logger.warn('Thread read degraded because control client is unavailable', {
         threadId,
-        errorMessage: error?.message || String(error),
+        scene,
+        attemptIndex: 0,
+        timeoutMs: 0,
+        usedResume: false,
+        degraded: true,
+        errorMessage: message,
+      });
+      return {
+        thread: this.minimalThreadSummary(threadId),
+        degraded: true,
+        degradedReason: truncate(message, 200),
+      };
+    }
+
+    try {
+      const timeoutMs = stageTimeout(20_000);
+      const read = await withTimeout(
+        control.readThread(threadId),
+        timeoutMs,
+        `thread/read(${scene}:attempt1)`,
+      );
+      if (read?.thread?.id) {
+        return {
+          thread: this.threadSummaryFromReadResult(read, threadId),
+          degraded: false,
+        };
+      }
+      reasons.push('thread/read returned empty thread');
+      this.logger.warn('Thread read returned empty payload; will retry with resume', {
+        threadId,
+        scene,
+        attemptIndex: 1,
+        timeoutMs,
+        usedResume: false,
+        degraded: true,
+      });
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      reasons.push(message);
+      this.logger.warn('Thread read attempt failed; will retry with resume', {
+        threadId,
+        scene,
+        attemptIndex: 1,
+        timeoutMs: stageTimeout(20_000),
+        usedResume: false,
+        degraded: true,
+        errorMessage: message,
       });
     }
 
-    const basic = await withTimeout(
-      control.readThread(threadId),
-      Math.min(this.options.requestTimeoutMs, 12_000),
-      'thread/read',
-    );
-    if (!basic?.thread?.id) {
-      return null;
+    try {
+      const timeoutMs = stageTimeout(12_000);
+      await withTimeout(
+        control.resumeThread(threadId),
+        timeoutMs,
+        `thread/resume(${scene})`,
+      );
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      reasons.push(`resume: ${message}`);
+      this.logger.warn('Thread resume attempt failed before retry read', {
+        threadId,
+        scene,
+        attemptIndex: 2,
+        timeoutMs: stageTimeout(12_000),
+        usedResume: true,
+        degraded: true,
+        errorMessage: message,
+      });
+    }
+
+    try {
+      const timeoutMs = stageTimeout(30_000);
+      const read = await withTimeout(
+        control.readThread(threadId),
+        timeoutMs,
+        `thread/read(${scene}:retry)`,
+      );
+      if (read?.thread?.id) {
+        return {
+          thread: this.threadSummaryFromReadResult(read, threadId),
+          degraded: true,
+          degradedReason: this.composeDegradedReason(reasons),
+        };
+      }
+      reasons.push('thread/read retry returned empty thread');
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      reasons.push(message);
+      this.logger.warn('Thread read retry failed; returning minimal degraded snapshot', {
+        threadId,
+        scene,
+        attemptIndex: 3,
+        timeoutMs: stageTimeout(30_000),
+        usedResume: true,
+        degraded: true,
+        errorMessage: message,
+      });
     }
 
     return {
-      threadId: String(basic.thread.id || threadId),
+      thread: this.minimalThreadSummary(threadId),
+      degraded: true,
+      degradedReason: this.composeDegradedReason(reasons),
+    };
+  }
+
+  private async fetchThreadConversationSnapshot(threadId: string): Promise<ThreadConversationSnapshot> {
+    const stageTimeout = (ms: number): number => Math.max(this.options.requestTimeoutMs, ms);
+    const reasons: string[] = [];
+    let control: CodexAppServerClient | null = null;
+    try {
+      control = await this.getControlClient();
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      reasons.push(message);
+      this.logger.warn('Failed to get control client for /current; falling back to degraded snapshot', {
+        threadId,
+        attemptIndex: 0,
+        timeoutMs: 0,
+        usedResume: false,
+        degraded: true,
+        errorMessage: message,
+      });
+    }
+    try {
+      if (control) {
+        const timeoutMs = stageTimeout(25_000);
+        const payload = await withTimeout(
+          control.request<unknown>('thread/read', {
+            threadId,
+            includeTurns: true,
+          }),
+          timeoutMs,
+          'thread/read(includeTurns=true)',
+        );
+        const parsed = parseThreadConversationSnapshot(payload);
+        if (parsed) {
+          return parsed;
+        }
+        throw new Error('thread/read(includeTurns=true) returned unparseable payload');
+      }
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      reasons.push(message);
+      this.logger.warn('Failed to fetch thread snapshot with turns; falling back to basic thread/read', {
+        threadId,
+        attemptIndex: 1,
+        timeoutMs: stageTimeout(25_000),
+        usedResume: false,
+        degraded: true,
+        errorMessage: message,
+      });
+    }
+
+    const basic = await this.readThreadSummaryWithDegrade(threadId, 'current');
+    return {
+      threadId: basic.thread.id || threadId,
       source: sourceLabel(String(basic.thread.source || 'unknown')),
       updatedAt: Number(basic.thread.updatedAt || 0),
       preview: sanitizePreview(String(basic.thread.preview || '')),
@@ -1985,6 +3053,10 @@ export class BridgeAgent extends EventEmitter {
       lastAssistant: '',
       recentTurns: [],
       degraded: true,
+      degradedReason: this.composeDegradedReason([
+        ...reasons,
+        basic.degradedReason || '',
+      ]),
     };
   }
 
@@ -1997,23 +3069,26 @@ export class BridgeAgent extends EventEmitter {
       return;
     }
 
-    let snapshot: ThreadConversationSnapshot | null = null;
+    let snapshot: ThreadConversationSnapshot;
     try {
       snapshot = await this.fetchThreadConversationSnapshot(binding.threadId);
     } catch (error: any) {
-      this.emitFinal(
-        event.chatId,
-        event.messageId,
-        this.locale === 'en'
-          ? `❌ Failed to read thread snapshot\n${error?.message || String(error)}`
-          : `❌ 读取会话快照失败\n${error?.message || String(error)}`,
-      );
-      return;
-    }
-
-    if (!snapshot) {
-      this.emitFinal(event.chatId, event.messageId, this.t('未能解析当前会话内容，请稍后重试。', 'Unable to parse current thread content. Please retry.'));
-      return;
+      const message = error?.message || String(error);
+      this.logger.warn('Unexpected /current failure; returning degraded fallback snapshot', {
+        threadId: binding.threadId,
+        errorMessage: message,
+      });
+      snapshot = {
+        threadId: binding.threadId,
+        source: sourceFromBindingMode(binding.mode),
+        updatedAt: 0,
+        preview: '',
+        lastUser: '',
+        lastAssistant: '',
+        recentTurns: [],
+        degraded: true,
+        degradedReason: truncate(message, 180),
+      };
     }
 
     const source = snapshot.source || sourceFromBindingMode(binding.mode);
@@ -2030,6 +3105,11 @@ export class BridgeAgent extends EventEmitter {
     }
     if (snapshot.degraded) {
       lines.push(this.t('注: 当前会话较大或较忙，已降级为基础快照。', 'Note: current thread is large or busy; fallback snapshot is shown.'));
+      if (snapshot.degradedReason) {
+        lines.push(this.locale === 'en'
+          ? `Reason: ${truncate(snapshot.degradedReason, 120)}`
+          : `原因: ${truncate(snapshot.degradedReason, 120)}`);
+      }
     }
     lines.push(this.locale === 'en' ? `Recent user: ${snapshot.lastUser ? truncate(snapshot.lastUser, 220) : '(none)'}` : `最近用户: ${snapshot.lastUser ? truncate(snapshot.lastUser, 220) : '(无)'}`);
     lines.push(this.locale === 'en' ? `Recent assistant: ${snapshot.lastAssistant ? truncate(snapshot.lastAssistant, 220) : '(none)'}` : `最近助手: ${snapshot.lastAssistant ? truncate(snapshot.lastAssistant, 220) : '(无)'}`);

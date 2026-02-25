@@ -9,6 +9,9 @@ import type {
   JsonRpcRequest,
   JsonRpcResponse,
   ThreadListItem,
+  UserInputOption,
+  UserInputQuestion,
+  UserInputRequestEvent,
   TurnExecutionResult,
   TurnUserInput,
 } from './types';
@@ -32,6 +35,8 @@ interface PendingTurn {
 }
 
 interface PendingApprovalInternal extends ApprovalRequestEvent {}
+
+interface PendingUserInputInternal extends UserInputRequestEvent {}
 
 interface ThreadReadResult {
   thread: {
@@ -60,6 +65,25 @@ interface ModelListResult {
   }>;
 }
 
+interface CollaborationModeListResult {
+  data?: Array<{
+    name?: string;
+    mode?: string;
+    model?: string | null;
+    reasoning_effort?: string;
+    reasoningEffort?: string;
+    developer_instructions?: string;
+    developerInstructions?: string;
+    settings?: {
+      model?: string | null;
+      reasoning_effort?: string;
+      reasoningEffort?: string;
+      developer_instructions?: string;
+      developerInstructions?: string;
+    } | null;
+  }>;
+}
+
 export interface RateLimitWindowSnapshot {
   label: string;
   usedPercent: number;
@@ -72,6 +96,32 @@ export interface RateLimitSnapshot {
   windows: RateLimitWindowSnapshot[];
   planType: string | null;
   creditsText: string | null;
+}
+
+export type ModeKind = 'plan' | 'code' | 'pair_programming' | 'execute' | 'custom';
+export type ModeWireKind = ModeKind | 'default';
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+export interface CollaborationModeMask {
+  name: string;
+  mode: ModeKind;
+  wireMode: ModeWireKind;
+  model: string | null;
+  reasoningEffort: ReasoningEffort | null;
+  developerInstructions: string | null;
+}
+
+export interface TurnCollaborationModePayload {
+  mode: ModeWireKind;
+  settings: {
+    model?: string;
+    reasoning_effort?: ReasoningEffort | null;
+    developer_instructions?: string | null;
+  };
+}
+
+export interface RunTurnOptions {
+  collaborationMode?: TurnCollaborationModePayload | null;
 }
 
 function idKey(id: JsonRpcId): string {
@@ -270,6 +320,170 @@ function normalizeSessionSource(value: unknown): string {
   return 'unknown';
 }
 
+function normalizeWireMode(value: unknown): ModeWireKind | null {
+  const normalized = extractString(value).trim().toLowerCase();
+  if (
+    normalized === 'plan'
+    || normalized === 'code'
+    || normalized === 'default'
+    || normalized === 'pair_programming'
+    || normalized === 'execute'
+    || normalized === 'custom'
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeModeKind(value: unknown): ModeKind | null {
+  const wireMode = normalizeWireMode(value);
+  if (!wireMode) {
+    return null;
+  }
+  if (wireMode === 'default') {
+    return 'code';
+  }
+  return wireMode;
+}
+
+function normalizeReasoningEffort(value: unknown): ReasoningEffort | null {
+  const normalized = extractString(value).trim().toLowerCase();
+  if (
+    normalized === 'none'
+    || normalized === 'minimal'
+    || normalized === 'low'
+    || normalized === 'medium'
+    || normalized === 'high'
+    || normalized === 'xhigh'
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'y') {
+      return true;
+    }
+    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'n') {
+      return false;
+    }
+  }
+  return fallback;
+}
+
+function normalizeUserInputOptions(value: unknown): UserInputOption[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const rows: UserInputOption[] = [];
+  value.forEach((entry, index) => {
+    if (isRecord(entry)) {
+      const id = extractString(entry.id).trim()
+        || extractString(entry.value).trim()
+        || String(index + 1);
+      const label = extractString(entry.label).trim()
+        || extractString(entry.title).trim()
+        || extractString(entry.value).trim()
+        || id;
+      const description = extractString(entry.description).trim() || extractString(entry.hint).trim() || undefined;
+      rows.push({
+        id,
+        label,
+        ...(description ? { description } : {}),
+      });
+      return;
+    }
+
+    const label = extractString(entry).trim();
+    if (label) {
+      rows.push({
+        id: String(index + 1),
+        label,
+      });
+    }
+  });
+  return rows;
+}
+
+function normalizeUserInputQuestions(rawParams: Record<string, unknown>): UserInputQuestion[] {
+  const questionsRaw = Array.isArray(rawParams.questions)
+    ? rawParams.questions
+    : isRecord(rawParams.input) && Array.isArray(rawParams.input.questions)
+      ? rawParams.input.questions
+      : isRecord(rawParams.request) && Array.isArray(rawParams.request.questions)
+        ? rawParams.request.questions
+        : [];
+
+  const normalized: UserInputQuestion[] = questionsRaw
+    .map((entry, index): UserInputQuestion | null => {
+      if (!isRecord(entry)) {
+        return null;
+      }
+
+      const options = normalizeUserInputOptions(entry.options ?? entry.choices);
+      const id = extractString(entry.id).trim()
+        || extractString(entry.key).trim()
+        || `q${index + 1}`;
+      const header = extractString(entry.header).trim() || extractString(entry.title).trim() || undefined;
+      const prompt = extractString(entry.question).trim()
+        || extractString(entry.prompt).trim()
+        || extractString(entry.text).trim()
+        || extractString(entry.label).trim()
+        || (header || '');
+
+      const allowMultiple = normalizeBoolean(
+        entry.allowMultiple ?? entry.multiple ?? entry.multiSelect ?? entry.multi_select,
+        false,
+      );
+      const allowTextInput = normalizeBoolean(
+        entry.allowTextInput ?? entry.allowText ?? entry.allowFreeText ?? entry.allow_free_text,
+        options.length === 0,
+      );
+
+      if (!prompt) {
+        return null;
+      }
+
+      return {
+        id,
+        ...(header ? { header } : {}),
+        prompt,
+        allowMultiple,
+        allowTextInput,
+        options,
+      };
+    })
+    .filter((entry): entry is UserInputQuestion => entry !== null);
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  const fallbackPrompt = extractString(rawParams.prompt).trim()
+    || extractString(rawParams.question).trim()
+    || extractString(rawParams.message).trim();
+  if (!fallbackPrompt) {
+    return [];
+  }
+
+  return [{
+    id: 'q1',
+    prompt: fallbackPrompt,
+    allowMultiple: false,
+    allowTextInput: true,
+    options: [],
+  }];
+}
+
 export class CodexAppServerClient extends EventEmitter {
   private readonly logger: Logger;
   private readonly codexBin: string;
@@ -288,6 +502,7 @@ export class CodexAppServerClient extends EventEmitter {
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private readonly pendingTurns = new Map<string, PendingTurn>();
   private readonly pendingApprovals = new Map<string, PendingApprovalInternal>();
+  private readonly pendingUserInputs = new Map<string, PendingUserInputInternal>();
 
   constructor(options: {
     logger: Logger;
@@ -336,6 +551,10 @@ export class CodexAppServerClient extends EventEmitter {
       clientInfo: {
         name: this.clientName,
         version: '0.1.0',
+      },
+      capabilities: {
+        // collaborationMode/list and collaborationMode turn fields are gated behind experimentalApi.
+        experimentalApi: true,
       },
     });
     this.started = true;
@@ -465,12 +684,6 @@ export class CodexAppServerClient extends EventEmitter {
       return;
     }
 
-    if (method === 'item/tool/requestUserInput') {
-      this.writeRpc({ id: message.id, result: { answers: {} } });
-      this.logger.warn('Auto-replied empty request_user_input answers', { client: this.clientName });
-      return;
-    }
-
     const rawParams = isRecord(message.params) ? message.params : {};
     const threadId =
       extractString(rawParams.threadId) ||
@@ -482,19 +695,50 @@ export class CodexAppServerClient extends EventEmitter {
     // Guard against late approval requests from already-finished/timed-out turns.
     // If we no longer track this turn as pending, forwarding approval to Telegram is confusing.
     if (!this.belongsToPendingTurn(threadId, turnId)) {
-      const isLegacy = method === 'execCommandApproval' || method === 'applyPatchApproval';
-      const decision = isLegacy ? 'abort' : 'cancel';
       this.logger.warn('Dropping stale approval request (turn already finished)', {
         client: this.clientName,
         method,
         threadId,
         turnId,
       });
+      if (method === 'item/tool/requestUserInput') {
+        this.writeRpc({
+          id: message.id,
+          result: {
+            answers: {},
+          },
+        });
+        return;
+      }
+      const isLegacy = method === 'execCommandApproval' || method === 'applyPatchApproval';
+      const decision = isLegacy ? 'abort' : 'cancel';
       this.writeRpc({
         id: message.id,
         result: {
           decision,
         },
+      });
+      return;
+    }
+
+    if (method === 'item/tool/requestUserInput') {
+      const questions = normalizeUserInputQuestions(rawParams);
+      const userInputRequestId = `uir_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const requestEvent: PendingUserInputInternal = {
+        userInputRequestId,
+        requestId: message.id,
+        threadId,
+        turnId,
+        questions,
+        rawParams,
+      };
+      this.pendingUserInputs.set(userInputRequestId, requestEvent);
+      this.emit('userInputRequested', requestEvent);
+      this.logger.info('Forwarded request_user_input to bridge runtime', {
+        client: this.clientName,
+        threadId,
+        turnId,
+        questionCount: questions.length,
       });
       return;
     }
@@ -659,6 +903,13 @@ export class CodexAppServerClient extends EventEmitter {
     }
 
     this.pendingTurns.delete(state.turnId);
+
+    // Drop any stale user-input prompts that belong to finished turns.
+    for (const [userInputRequestId, pending] of this.pendingUserInputs.entries()) {
+      if (pending.turnId && pending.turnId === state.turnId) {
+        this.pendingUserInputs.delete(userInputRequestId);
+      }
+    }
   }
 
   private ensureTurnState(turnId: string, threadId: string): PendingTurn {
@@ -718,6 +969,7 @@ export class CodexAppServerClient extends EventEmitter {
     this.pendingTurns.clear();
 
     this.pendingApprovals.clear();
+    this.pendingUserInputs.clear();
   }
 
   private failPendingTurns(message: string): void {
@@ -737,6 +989,7 @@ export class CodexAppServerClient extends EventEmitter {
       }
     }
     this.pendingTurns.clear();
+    this.pendingUserInputs.clear();
   }
 
   private writeRpc(payload: Record<string, unknown>): void {
@@ -801,6 +1054,43 @@ export class CodexAppServerClient extends EventEmitter {
     return Array.from(new Set(names));
   }
 
+  async listCollaborationModes(): Promise<CollaborationModeMask[]> {
+    const result = await this.request<CollaborationModeListResult>('collaborationMode/list', {});
+    const rows = Array.isArray(result?.data) ? result.data : [];
+    const modes: CollaborationModeMask[] = [];
+    for (const row of rows) {
+      const wireMode = normalizeWireMode(row?.mode);
+      const mode = normalizeModeKind(row?.mode);
+      if (!wireMode || !mode) {
+        continue;
+      }
+      const settings = isRecord(row?.settings) ? row.settings : {};
+      const model = (
+        extractString(row?.model).trim()
+        || extractString(settings.model).trim()
+      ) || null;
+      modes.push({
+        name: extractString(row?.name).trim() || mode,
+        mode,
+        wireMode,
+        model,
+        reasoningEffort: normalizeReasoningEffort(
+          row?.reasoning_effort
+          ?? row?.reasoningEffort
+          ?? settings.reasoning_effort
+          ?? settings.reasoningEffort,
+        ),
+        developerInstructions: extractString(
+          row?.developer_instructions
+          ?? row?.developerInstructions
+          ?? settings.developer_instructions
+          ?? settings.developerInstructions,
+        ).trim() || null,
+      });
+    }
+    return modes;
+  }
+
   async getAccountRateLimits(): Promise<RateLimitSnapshot> {
     const result = await this.request<Record<string, unknown>>('account/rateLimits/read', {});
     const limits = isRecord(result?.rateLimits) ? result.rateLimits : {};
@@ -838,9 +1128,14 @@ export class CodexAppServerClient extends EventEmitter {
     });
   }
 
-  async runTurn(threadId: string, input: TurnUserInput[], turnTimeoutMs: number): Promise<TurnExecutionResult> {
+  async runTurn(
+    threadId: string,
+    input: TurnUserInput[],
+    turnTimeoutMs: number,
+    options?: RunTurnOptions,
+  ): Promise<TurnExecutionResult> {
     const preferred = this.preferredModel || undefined;
-    const first = await this.executeTurn(threadId, input, preferred, turnTimeoutMs);
+    const first = await this.executeTurn(threadId, input, preferred, turnTimeoutMs, options);
 
     if (
       first.status === 'failed' &&
@@ -853,7 +1148,7 @@ export class CodexAppServerClient extends EventEmitter {
         threadId,
         fallbackModel: this.fallbackModel,
       });
-      const second = await this.executeTurn(threadId, input, this.fallbackModel, turnTimeoutMs);
+      const second = await this.executeTurn(threadId, input, this.fallbackModel, turnTimeoutMs, options);
       return { ...second, usedFallback: true };
     }
 
@@ -865,6 +1160,7 @@ export class CodexAppServerClient extends EventEmitter {
     input: TurnUserInput[],
     model: string | undefined,
     turnTimeoutMs: number,
+    options?: RunTurnOptions,
   ): Promise<TurnExecutionResult> {
     const normalizedInput = input
       .map((item): Record<string, unknown> | null => {
@@ -894,8 +1190,28 @@ export class CodexAppServerClient extends EventEmitter {
     if (model) {
       params.model = model;
     }
-
-    const result = await this.request<{ turn?: { id?: string } }>('turn/start', params);
+    if (options?.collaborationMode) {
+      params.collaborationMode = options.collaborationMode;
+    }
+    let result: { turn?: { id?: string } };
+    try {
+      result = await this.request<{ turn?: { id?: string } }>('turn/start', params);
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      if (options?.collaborationMode && this.isCollaborationModeUnsupported(message)) {
+        this.logger.warn('Retrying turn/start without collaborationMode', {
+          client: this.clientName,
+          threadId,
+          mode: options.collaborationMode.mode,
+          error: message,
+        });
+        const fallbackParams = { ...params };
+        delete fallbackParams.collaborationMode;
+        result = await this.request<{ turn?: { id?: string } }>('turn/start', fallbackParams);
+      } else {
+        throw error;
+      }
+    }
     const turnId = extractString(result?.turn?.id);
     if (!turnId) {
       throw new Error('turn/start response missing turn id');
@@ -931,6 +1247,65 @@ export class CodexAppServerClient extends EventEmitter {
       return false;
     }
     return /model_not_found/i.test(errorMessage) || /does not exist/i.test(errorMessage);
+  }
+
+  private isCollaborationModeUnsupported(errorMessage: string | null): boolean {
+    if (!errorMessage) {
+      return false;
+    }
+    const normalized = errorMessage.toLowerCase();
+    if (!normalized.includes('collaboration')) {
+      return false;
+    }
+    return /unsupported|unknown|invalid|unexpected|unrecognized|not found|not exist|parse/i.test(normalized);
+  }
+
+  resolveUserInput(userInputRequestId: string, answers: Record<string, unknown>): boolean {
+    const pending = this.pendingUserInputs.get(userInputRequestId);
+    if (!pending) {
+      return false;
+    }
+    try {
+      this.writeRpc({
+        id: pending.requestId,
+        result: {
+          answers,
+        },
+      });
+      this.pendingUserInputs.delete(userInputRequestId);
+      return true;
+    } catch (error: any) {
+      this.logger.warn('Failed to resolve request_user_input', {
+        client: this.clientName,
+        userInputRequestId,
+        error: error?.message || String(error),
+      });
+      return false;
+    }
+  }
+
+  cancelUserInput(userInputRequestId: string): boolean {
+    const pending = this.pendingUserInputs.get(userInputRequestId);
+    if (!pending) {
+      return false;
+    }
+    try {
+      this.writeRpc({
+        id: pending.requestId,
+        result: {
+          answers: {},
+        },
+      });
+      this.pendingUserInputs.delete(userInputRequestId);
+      return true;
+    } catch (error: any) {
+      this.logger.warn('Failed to cancel request_user_input', {
+        client: this.clientName,
+        userInputRequestId,
+        error: error?.message || String(error),
+      });
+      return false;
+    }
   }
 
   resolveApproval(approvalId: string, allow: boolean): boolean {

@@ -17,6 +17,13 @@
 - `/bind <threadId|index>`
 - `/usage` (alias: `/limits`)
   - Show Codex rate limits remaining and reset time.
+- `/plan on|off|status`
+  - Toggle/query native Codex collaboration mode (Plan/Code).
+  - In Plan mode, if Codex asks follow-up questions, answer directly with Telegram buttons or text.
+  - After plan draft is produced, Telegram shows confirmation buttons:
+    - Execute plan
+    - Refine plan
+    - Cancel
 - `/active`
 - `/current`
 - `/detail <index|threadId|current|latest>`
@@ -46,6 +53,13 @@
 - `/bind <threadId|编号>`
 - `/usage`（别名：`/limits`）
   - 查询 Codex 剩余用量与重置时间。
+- `/plan on|off|status`
+  - 切换/查询 Codex 原生协作模式（Plan/Code）。
+  - Plan 模式下如果 Codex 追问决策点，可直接在 Telegram 中点按钮或发文本回答。
+  - 计划草稿完成后会出现确认按钮：
+    - 确认并执行
+    - 继续改计划
+    - 取消本轮
 - `/active`
 - `/current`
 - `/detail <编号|threadId|current|latest>`

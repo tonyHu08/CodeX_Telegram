@@ -43,7 +43,7 @@ interface IncomingUserMessageEvent {
   createdAt: number;
 }
 
-type ControlCommandName = 'threads' | 'bind' | 'status' | 'current' | 'active' | 'detail' | 'usage' | 'unbind' | 'cancel' | 'help';
+type ControlCommandName = 'threads' | 'bind' | 'status' | 'current' | 'active' | 'detail' | 'usage' | 'plan' | 'unbind' | 'cancel' | 'help';
 
 interface IncomingControlCommandEvent {
   type: 'incomingControlCommand';
@@ -550,6 +550,9 @@ function parseSupportedCommand(rawText: string): { command: ControlCommandName; 
   if (name === 'usage' || name === 'limits') {
     return { command: 'usage', args };
   }
+  if (name === 'plan') {
+    return { command: 'plan', args };
+  }
   if (name === 'unbind') {
     return { command: 'unbind', args };
   }
@@ -588,6 +591,18 @@ function parseCallbackCommand(data: string): { command: ControlCommandName; args
   if (value === 'usage') {
     return { command: 'usage', args: '' };
   }
+  if (value === 'plan_on') {
+    return { command: 'plan', args: 'on' };
+  }
+  if (value === 'plan_off') {
+    return { command: 'plan', args: 'off' };
+  }
+  if (value === 'plan_status') {
+    return { command: 'plan', args: 'status' };
+  }
+  if (/^plan_[artsxcef]:/i.test(value)) {
+    return { command: 'plan', args: `callback ${value}` };
+  }
   if (value === 'unbind') {
     return { command: 'unbind', args: '' };
   }
@@ -609,7 +624,9 @@ function buildMainReplyKeyboard(): Record<string, unknown> {
       [{ text: '/threads' }, { text: '/bind latest' }],
       [{ text: '/usage' }, { text: '/status' }],
       [{ text: '/active' }, { text: '/current' }],
-      [{ text: '/detail' }, { text: '/cancel' }],
+      [{ text: '/plan on' }, { text: '/plan off' }],
+      [{ text: '/plan status' }, { text: '/cancel' }],
+      [{ text: '/detail' }],
       [{ text: '/unbind' }],
     ],
     resize_keyboard: true,
@@ -848,6 +865,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
         return;
       }
 
+      const baseOptions = event.options || {};
       const failureText = event.text.trim();
       const isFailure = /^(执行失败|execution failed)[:：]?/i.test(failureText) || /app-server stopped/i.test(failureText);
       if (isFailure) {
@@ -856,11 +874,13 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
           ? `${failureText}\n\n${t('建议：请确认 Codex App 已打开且在线，然后重试。', 'Tip: make sure Codex App is open and online, then retry.')}`
           : failureText;
         void sendTelegramMessage(event.chatId, `❌ ${decoratedFailure}`, {
-          replyMarkup: buildMainReplyKeyboard(),
+          ...baseOptions,
+          replyMarkup: baseOptions.replyMarkup || buildMainReplyKeyboard(),
         });
       } else {
         void sendTelegramMessage(event.chatId, `${t('✅ 已完成', '✅ Completed')}\n\n${event.text}`, {
-          replyMarkup: buildMainReplyKeyboard(),
+          ...baseOptions,
+          replyMarkup: baseOptions.replyMarkup || buildMainReplyKeyboard(),
         });
       }
     }
@@ -1365,6 +1385,7 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
         { command: 'bind', description: t('绑定会话（/bind latest 或 /bind <id>）', 'Bind a thread (/bind latest or /bind <id>)') },
         { command: 'usage', description: t('查询 Codex 剩余用量', 'Show Codex usage limits') },
         { command: 'limits', description: t('查询 Codex 剩余用量（别名）', 'Show Codex usage limits (alias)') },
+        { command: 'plan', description: t('切换 Plan 模式（on/off/status）', 'Switch Plan mode (on/off/status)') },
         { command: 'current', description: t('查看当前会话快照', 'Show current thread snapshot') },
         { command: 'active', description: t('查看当前会话标题', 'Show active thread title') },
         { command: 'detail', description: t('查看会话详情（来源/ID/CWD）', 'Show thread details (source/ID/CWD)') },
