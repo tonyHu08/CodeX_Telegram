@@ -134,6 +134,9 @@ export type DeviceOutboundEvent =
 
 export interface AgentStatus {
   deviceId: string;
+  appVersion: string;
+  coreVersion: string;
+  runtimeState: 'running';
   selectedThreadId: string | null;
   pendingApprovals: number;
   runningTurns: number;

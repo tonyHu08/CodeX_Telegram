@@ -382,13 +382,14 @@ class TelegramBotClient {
     },
   ): Promise<void> {
     const chunks = splitTelegramText(text);
+    const lastIndex = chunks.length - 1;
     for (const [index, chunk] of chunks.entries()) {
       const payload: Record<string, unknown> = {
         chat_id: chatId,
         text: chunk,
         disable_web_page_preview: true,
       };
-      if (index === 0 && options?.replyMarkup) {
+      if (index === lastIndex && options?.replyMarkup) {
         payload.reply_markup = options.replyMarkup;
       }
       if (options?.parseMode) {
@@ -811,7 +812,12 @@ export async function startLocalRelay(options: LocalRelayStartOptions): Promise<
         deviceId,
         eventType: event.type,
         chatId: (event as { chatId?: string }).chatId,
+        messageId: (event as { messageId?: string }).messageId,
         purpose: event.type === 'finalResponse' ? (event as FinalResponseEvent).purpose || 'turn' : undefined,
+        hasReplyMarkup:
+          event.type === 'finalResponse'
+            ? !!(event as FinalResponseEvent).options?.replyMarkup
+            : undefined,
         textPreview:
           event.type === 'finalResponse'
             ? String((event as FinalResponseEvent).text || '').slice(0, 120)

@@ -48,6 +48,8 @@ export interface BridgeAgentOptions {
   dbPath: string;
   codexBin?: string;
   fallbackModel?: string;
+  appVersion?: string;
+  coreVersion?: string;
   requestTimeoutMs?: number;
   turnTimeoutMs?: number;
   stuckTurnResetMs?: number;
@@ -64,8 +66,10 @@ const COLLABORATION_MODE_CACHE_TTL_MS = 60_000;
 const CHAT_MODE_STATE_PREFIX = 'chat_mode:';
 const PLAN_INPUT_TIMEOUT_MS = 10 * 60 * 1000;
 const PLAN_CONFIRM_TIMEOUT_MS = 30 * 60 * 1000;
+const UNKNOWN_VERSION = 'unknown';
 const CODEX_GLOBAL_STATE_PATH = process.env.CODEX_GLOBAL_STATE_PATH
   || (process.env.HOME ? path.join(process.env.HOME, '.codex', '.codex-global-state.json') : '');
+const DETECTED_CORE_VERSION = detectCoreVersion();
 
 type ChatModeOverride = 'plan' | 'code';
 
@@ -74,6 +78,8 @@ interface ResolvedBridgeAgentOptions {
   dbPath: string;
   codexBin: string;
   fallbackModel: string;
+  appVersion: string;
+  coreVersion: string;
   requestTimeoutMs: number;
   turnTimeoutMs: number;
   stuckTurnResetMs: number;
@@ -192,6 +198,28 @@ function formatLocalTime(epochMs: number): string {
 
 function compactText(value: string): string {
   return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function detectCoreVersion(): string {
+  const candidates = [
+    path.resolve(__dirname, '..', 'package.json'),
+    path.resolve(__dirname, '../../package.json'),
+  ];
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { version?: unknown };
+      const version = compactText(String(parsed?.version || ''));
+      if (version) {
+        return version;
+      }
+    } catch {
+      // Ignore and continue.
+    }
+  }
+  return UNKNOWN_VERSION;
 }
 
 function sourceLabel(source: string): string {
@@ -883,6 +911,8 @@ export class BridgeAgent extends EventEmitter {
       dbPath: options.dbPath,
       codexBin: options.codexBin ?? 'codex',
       fallbackModel: options.fallbackModel ?? 'gpt-5.2-codex',
+      appVersion: compactText(options.appVersion || '') || UNKNOWN_VERSION,
+      coreVersion: compactText(options.coreVersion || '') || DETECTED_CORE_VERSION,
       requestTimeoutMs: options.requestTimeoutMs ?? 60_000,
       turnTimeoutMs: options.turnTimeoutMs ?? 20 * 60 * 1000,
       stuckTurnResetMs: options.stuckTurnResetMs ?? 4 * 60 * 1000,
@@ -959,21 +989,15 @@ export class BridgeAgent extends EventEmitter {
   }
 
   async bindThread(threadId: string): Promise<void> {
-    const control = await this.getControlClient();
-    let source = 'unknown';
-    try {
-      const read = await withTimeout(
-        control.readThread(threadId),
-        Math.min(this.options.requestTimeoutMs, 12_000),
-        'thread/read(bindThread)',
-      );
-      if (read?.thread?.id) {
-        source = sourceLabel(String(read.thread.source || 'unknown'));
-      }
-    } catch (error: any) {
-      this.logger.warn('bindThread metadata read failed; binding with fallback metadata', {
+    const read = await this.readThreadResilient(threadId, 'bindThread');
+    let source = sourceLabel(String(read.thread.source || 'unknown'));
+    if (!source || source === 'unknown') {
+      source = 'unknown';
+    }
+    if (read.degraded) {
+      this.logger.warn('bindThread used degraded thread metadata', {
         threadId,
-        error: error?.message || String(error),
+        degradedReason: read.degradedReason || null,
       });
     }
 
@@ -993,6 +1017,9 @@ export class BridgeAgent extends EventEmitter {
   async getStatus(relayConnected: boolean, lastError: string | null): Promise<AgentStatus> {
     return {
       deviceId: this.options.deviceId,
+      appVersion: this.options.appVersion,
+      coreVersion: this.options.coreVersion,
+      runtimeState: 'running',
       selectedThreadId: this.getBinding()?.threadId || null,
       pendingApprovals: this.pendingApprovals.size,
       runningTurns: this.runningTurns.size,
@@ -1015,22 +1042,8 @@ export class BridgeAgent extends EventEmitter {
       return null;
     }
 
-    const control = await this.getControlClient();
-    const read = await withTimeout(
-      control.readThread(binding.threadId),
-      Math.min(this.options.requestTimeoutMs, 8_000),
-      'thread/read(bound-summary)',
-    );
-    if (!read?.thread?.id) {
-      return null;
-    }
-    const thread: ThreadSummary = {
-      id: String(read.thread.id || binding.threadId),
-      preview: sanitizePreview(String(read.thread.preview || '')),
-      updatedAt: Number(read.thread.updatedAt || 0),
-      source: sourceLabel(String(read.thread.source || 'unknown')),
-      cwd: read.thread.cwd == null ? null : String(read.thread.cwd),
-    };
+    const read = await this.readThreadResilient(binding.threadId, 'bound-summary');
+    const thread = read.thread;
     const metadata = loadCodexSidebarMetadata(this.logger);
     return {
       id: thread.id,
@@ -1302,7 +1315,14 @@ export class BridgeAgent extends EventEmitter {
           await this.sendHelp(event.chatId, event.messageId);
           return;
         default:
-          this.emitFinal(event.chatId, event.messageId, this.t('不支持该命令。请发送 /help 查看可用命令。', 'Unsupported command. Send /help for available commands.'));
+          this.emitFinal(
+            event.chatId,
+            event.messageId,
+            this.t(
+              '不支持该命令。请发送 /help 查看可用命令。\n若你刚升级过应用，请重启桌面端后再试（可用 /status 查看运行版本）。',
+              'Unsupported command. Send /help for available commands.\nIf you just upgraded, restart desktop app and retry (use /status to check runtime version).',
+            ),
+          );
       }
     } catch (error: any) {
       const msg = error?.message || String(error);
@@ -1975,6 +1995,12 @@ export class BridgeAgent extends EventEmitter {
         return;
       }
 
+      const pendingPlanInput = this.pendingPlanInputByChat.get(event.chatId);
+      if (pendingPlanInput) {
+        this.runtimeManager.cancelUserInput(pendingPlanInput.userInputRequestId, pendingPlanInput.threadId || undefined);
+        this.clearPlanInputSession(pendingPlanInput);
+      }
+      this.clearPlanConfirmationForChat(event.chatId);
       this.setChatModeOverride(event.chatId, 'plan');
       this.emitFinal(
         event.chatId,
@@ -2358,12 +2384,18 @@ export class BridgeAgent extends EventEmitter {
           type: 'finalResponse',
           chatId: event.chatId,
           messageId: event.messageId,
-          text: `${result.finalText || 'OK'}\n\n${this.t(
+          text: result.finalText || 'OK',
+          purpose: 'turn',
+          createdAt: Date.now(),
+        });
+        this.emitFinal(
+          event.chatId,
+          event.messageId,
+          this.t(
             '——\n请确认下一步：\n• /plan execute  确认并执行\n• /plan refine  继续改计划\n• /plan cancel  取消本轮',
             '--\nConfirm next step:\n• /plan execute  execute plan\n• /plan refine  keep refining plan\n• /plan cancel  cancel this plan',
-          )}`,
-          purpose: 'turn',
-          options: {
+          ),
+          {
             replyMarkup: {
               inline_keyboard: [
                 [{ text: this.t('✅ 确认并执行', '✅ Execute plan'), callback_data: `plan_e:${token}` }],
@@ -2372,8 +2404,7 @@ export class BridgeAgent extends EventEmitter {
               ],
             },
           },
-          createdAt: Date.now(),
-        });
+        );
         return;
       }
 
@@ -2659,23 +2690,7 @@ export class BridgeAgent extends EventEmitter {
       }
     }
 
-    let readResult: Awaited<ReturnType<CodexAppServerClient['readThread']>> | null = null;
-    try {
-      readResult = await withTimeout(
-        control.readThread(targetThreadId),
-        Math.min(this.options.requestTimeoutMs, 12_000),
-        'thread/read(bind)',
-      );
-      if (readResult && !readResult.thread?.id) {
-        this.emitFinal(event.chatId, event.messageId, this.locale === 'en' ? `Bind failed: unable to read thread ${targetThreadId}` : `绑定失败：无法读取线程 ${targetThreadId}`);
-        return;
-      }
-    } catch (error: any) {
-      this.logger.warn('Bind metadata read failed; proceeding with optimistic bind', {
-        threadId: targetThreadId,
-        error: error?.message || String(error),
-      });
-    }
+    const readResult = await this.readThreadResilient(targetThreadId, 'bind');
 
     void this.runtimeManager.getOrCreate(targetThreadId).catch((error: any) => {
       this.logger.warn('Deferred runtime warmup failed after /bind', {
@@ -2683,10 +2698,10 @@ export class BridgeAgent extends EventEmitter {
         error: error?.message || String(error),
       });
     });
-    const source = sourceLabel(String(readResult?.thread?.source || 'unknown'));
+    const source = sourceLabel(String(readResult.thread.source || 'unknown'));
     this.db.saveBinding(this.bindingChatId(), targetThreadId, `thread:${source}`, nowMs());
 
-    const preview = sanitizePreview(String(readResult?.thread?.preview || ''));
+    const preview = sanitizePreview(String(readResult.thread.preview || ''));
     this.emitFinal(
       event.chatId,
       event.messageId,
@@ -2694,7 +2709,14 @@ export class BridgeAgent extends EventEmitter {
         this.locale === 'en' ? `Bound thread: ${targetThreadId}` : `已绑定线程: ${targetThreadId}`,
         this.locale === 'en' ? `Source: ${source}` : `来源: ${source}`,
         preview ? (this.locale === 'en' ? `Preview: ${truncate(preview, 160)}` : `预览: ${truncate(preview, 160)}`) : null,
-        !readResult ? this.t('提示: 元数据读取超时，已先完成绑定；首次消息会自动继续。', 'Tip: metadata read timed out; binding already completed. First message will continue automatically.') : null,
+        readResult.degraded
+          ? this.t('提示: 元数据读取超时，已先完成绑定；首次消息会自动继续。', 'Tip: metadata read timed out; binding already completed. First message will continue automatically.')
+          : null,
+        readResult.degraded && readResult.degradedReason
+          ? (this.locale === 'en'
+            ? `Reason: ${truncate(readResult.degradedReason, 140)}`
+            : `原因: ${truncate(readResult.degradedReason, 140)}`)
+          : null,
         source === 'cli' ? this.t('提示: 该线程来源为 cli，在 Codex App 中可能不显示实时更新。', 'Tip: this thread is from CLI and may not appear live-updated in Codex App.') : null,
         this.t('可用: /current 查看当前会话快照', 'Available: /current to view current thread snapshot'),
       ]
@@ -2715,32 +2737,8 @@ export class BridgeAgent extends EventEmitter {
       return;
     }
 
-    const control = await this.getControlClient();
-    let readResult: Awaited<ReturnType<CodexAppServerClient['readThread']>>;
-    try {
-      readResult = await withTimeout(
-        control.readThread(binding.threadId),
-        Math.min(this.options.requestTimeoutMs, 8_000),
-        'thread/read',
-      );
-    } catch (error: any) {
-      this.emitFinal(
-        event.chatId,
-        event.messageId,
-        this.locale === 'en'
-          ? `❌ Failed to read current thread\n${error?.message || String(error)}`
-          : `❌ 读取当前会话失败\n${error?.message || String(error)}`,
-      );
-      return;
-    }
-
-    const thread: ThreadSummary = {
-      id: String(readResult.thread.id || binding.threadId),
-      preview: sanitizePreview(String(readResult.thread.preview || '')),
-      updatedAt: Number(readResult.thread.updatedAt || 0),
-      cwd: readResult.thread.cwd == null ? null : String(readResult.thread.cwd),
-      source: sourceLabel(String(readResult.thread.source || 'unknown')),
-    };
+    const readResult = await this.readThreadResilient(binding.threadId, 'active');
+    const thread = readResult.thread;
     this.db.saveBinding(this.bindingChatId(), thread.id, `thread:${thread.source}`, nowMs());
 
     const metadata = loadCodexSidebarMetadata(this.logger);
@@ -2763,6 +2761,14 @@ export class BridgeAgent extends EventEmitter {
         ? `Task status: ${running ? (queued ? 'running + queued' : 'running') : (queued ? 'queued' : 'idle')}`
         : `任务状态: ${running ? (queued ? 'running + queued' : 'running') : (queued ? 'queued' : 'idle')}`,
     );
+    if (readResult.degraded) {
+      lines.push(this.t('注: 当前会话读取较慢，已返回降级快照。', 'Note: current thread read is slow; returned degraded snapshot.'));
+      if (readResult.degradedReason) {
+        lines.push(this.locale === 'en'
+          ? `Reason: ${escapeTelegramHtml(truncate(readResult.degradedReason, 180))}`
+          : `原因: ${escapeTelegramHtml(truncate(readResult.degradedReason, 180))}`);
+      }
+    }
     lines.push(this.t('可用: /current 查看快照，/detail current 查看详情', 'Available: /current for snapshot, /detail current for details'));
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
@@ -2808,7 +2814,7 @@ export class BridgeAgent extends EventEmitter {
       targetThreadId = arg;
     }
 
-    const readResult = await this.readThreadSummaryWithDegrade(targetThreadId, 'detail');
+    const readResult = await this.readThreadResilient(targetThreadId, 'detail');
     const thread = readResult.thread;
 
     const metadata = loadCodexSidebarMetadata(this.logger);
@@ -2878,8 +2884,14 @@ export class BridgeAgent extends EventEmitter {
     };
   }
 
-  private async readThreadSummaryWithDegrade(threadId: string, scene: string): Promise<ThreadReadWithDegradeResult> {
-    const stageTimeout = (ms: number): number => Math.max(this.options.requestTimeoutMs, ms);
+  private async readThreadResilient(threadId: string, scene: string): Promise<ThreadReadWithDegradeResult> {
+    const stageTimeout = (ms: number): number => {
+      const configured = Number(this.options.requestTimeoutMs || 0);
+      if (!Number.isFinite(configured) || configured <= 0) {
+        return ms;
+      }
+      return Math.min(configured, ms);
+    };
     const reasons: string[] = [];
     let control: CodexAppServerClient;
     try {
@@ -2903,7 +2915,7 @@ export class BridgeAgent extends EventEmitter {
     }
 
     try {
-      const timeoutMs = stageTimeout(20_000);
+      const timeoutMs = stageTimeout(30_000);
       const read = await withTimeout(
         control.readThread(threadId),
         timeoutMs,
@@ -2931,7 +2943,7 @@ export class BridgeAgent extends EventEmitter {
         threadId,
         scene,
         attemptIndex: 1,
-        timeoutMs: stageTimeout(20_000),
+        timeoutMs: stageTimeout(30_000),
         usedResume: false,
         degraded: true,
         errorMessage: message,
@@ -2996,7 +3008,13 @@ export class BridgeAgent extends EventEmitter {
   }
 
   private async fetchThreadConversationSnapshot(threadId: string): Promise<ThreadConversationSnapshot> {
-    const stageTimeout = (ms: number): number => Math.max(this.options.requestTimeoutMs, ms);
+    const stageTimeout = (ms: number): number => {
+      const configured = Number(this.options.requestTimeoutMs || 0);
+      if (!Number.isFinite(configured) || configured <= 0) {
+        return ms;
+      }
+      return Math.min(configured, ms);
+    };
     const reasons: string[] = [];
     let control: CodexAppServerClient | null = null;
     try {
@@ -3015,7 +3033,7 @@ export class BridgeAgent extends EventEmitter {
     }
     try {
       if (control) {
-        const timeoutMs = stageTimeout(25_000);
+        const timeoutMs = stageTimeout(30_000);
         const payload = await withTimeout(
           control.request<unknown>('thread/read', {
             threadId,
@@ -3036,14 +3054,14 @@ export class BridgeAgent extends EventEmitter {
       this.logger.warn('Failed to fetch thread snapshot with turns; falling back to basic thread/read', {
         threadId,
         attemptIndex: 1,
-        timeoutMs: stageTimeout(25_000),
+        timeoutMs: stageTimeout(30_000),
         usedResume: false,
         degraded: true,
         errorMessage: message,
       });
     }
 
-    const basic = await this.readThreadSummaryWithDegrade(threadId, 'current');
+    const basic = await this.readThreadResilient(threadId, 'current');
     return {
       threadId: basic.thread.id || threadId,
       source: sourceLabel(String(basic.thread.source || 'unknown')),
@@ -3159,12 +3177,34 @@ export class BridgeAgent extends EventEmitter {
   }
 
   private async handleUsageCommand(event: IncomingControlCommandEvent): Promise<void> {
-    const control = await this.getControlClient();
-    const snapshot = await withTimeout(
-      control.getAccountRateLimits(),
-      Math.min(this.options.requestTimeoutMs, 10_000),
-      'account/rateLimits/read',
-    );
+    let snapshot: Awaited<ReturnType<CodexAppServerClient['getAccountRateLimits']>>;
+    try {
+      const control = await this.getControlClient();
+      snapshot = await withTimeout(
+        control.getAccountRateLimits(),
+        Math.min(this.options.requestTimeoutMs, 10_000),
+        'account/rateLimits/read',
+      );
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      this.logger.warn('Usage command degraded due to rate-limit read failure', {
+        errorMessage: message,
+      });
+      this.emitFinal(
+        event.chatId,
+        event.messageId,
+        [
+          this.t('📊 剩余用量', '📊 Rate limits remaining'),
+          '',
+          this.t('暂时无法读取用量信息，请稍后再试。', 'Unable to read usage data right now. Please try again later.'),
+          this.locale === 'en'
+            ? `Reason: ${truncate(message, 140)}`
+            : `原因: ${truncate(message, 140)}`,
+        ].join('\n'),
+        { replyMarkup: buildMainReplyKeyboard() },
+      );
+      return;
+    }
 
     if (!snapshot.windows.length) {
       this.emitFinal(
@@ -3201,25 +3241,22 @@ export class BridgeAgent extends EventEmitter {
 
     let threadUpdatedAt = 0;
     let bindingSource = binding ? sourceFromBindingMode(binding.mode) : 'unknown';
+    let statusDegradedReason = '';
     if (binding) {
-      try {
-        const control = await this.getControlClient();
-        const read = await withTimeout(
-          control.readThread(binding.threadId),
-          Math.min(this.options.requestTimeoutMs, 8_000),
-          'thread/read',
-        );
-        threadUpdatedAt = Number(read.thread.updatedAt || 0);
-        if (bindingSource === 'unknown') {
-          bindingSource = sourceLabel(String(read.thread.source || 'unknown'));
-          this.db.saveBinding(this.bindingChatId(), binding.threadId, `thread:${bindingSource}`, nowMs());
-        }
-      } catch {
-        // Keep fallback values when thread lookup fails.
+      const read = await this.readThreadResilient(binding.threadId, 'status');
+      threadUpdatedAt = Number(read.thread.updatedAt || 0);
+      statusDegradedReason = read.degradedReason || '';
+      if (bindingSource === 'unknown') {
+        bindingSource = sourceLabel(String(read.thread.source || 'unknown'));
+        this.db.saveBinding(this.bindingChatId(), binding.threadId, `thread:${bindingSource}`, nowMs());
       }
     }
 
     const lines: string[] = [];
+    lines.push(this.locale === 'en'
+      ? `Runtime version: app ${this.options.appVersion} · core ${this.options.coreVersion}`
+      : `运行版本: app ${this.options.appVersion} · core ${this.options.coreVersion}`);
+    lines.push(this.t('运行状态: agent 已运行', 'Runtime state: agent running'));
     lines.push(this.locale === 'en' ? `Bound thread: ${binding ? binding.threadId : '(none)'}` : `绑定线程: ${binding ? binding.threadId : '(未绑定)'}`);
     if (binding) {
       lines.push(this.locale === 'en' ? `Thread source: ${bindingSource}` : `线程来源: ${bindingSource}`);
@@ -3229,10 +3266,17 @@ export class BridgeAgent extends EventEmitter {
       if (threadUpdatedAt > 0) {
         lines.push(this.locale === 'en' ? `Thread updated at: ${formatLocalTime(toEpochMs(threadUpdatedAt))}` : `会话更新时间: ${formatLocalTime(toEpochMs(threadUpdatedAt))}`);
       }
+      if (statusDegradedReason) {
+        lines.push(this.t('注: 会话读取已降级为基础元数据。', 'Note: thread read degraded to basic metadata.'));
+        lines.push(this.locale === 'en'
+          ? `Reason: ${truncate(statusDegradedReason, 140)}`
+          : `原因: ${truncate(statusDegradedReason, 140)}`);
+      }
     }
     lines.push(this.locale === 'en' ? `Running tasks: ${this.runningTurns.size}` : `运行中任务: ${this.runningTurns.size}`);
     lines.push(this.locale === 'en' ? `Queued tasks: ${this.queuedByThread.size}` : `排队任务: ${this.queuedByThread.size}`);
     lines.push(this.locale === 'en' ? `Pending approvals: ${this.pendingApprovals.size}` : `待审批: ${this.pendingApprovals.size}`);
+    lines.push(this.t('提示: 若新命令提示不支持，请重启桌面端以加载最新版本。', 'Tip: if a new command appears unsupported, restart desktop app to load the latest runtime.'));
 
     this.emitFinal(event.chatId, event.messageId, lines.join('\n'), {
       replyMarkup: buildMainReplyKeyboard(),

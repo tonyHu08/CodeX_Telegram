@@ -167,6 +167,48 @@ function isLocalRelayUrl(value: string): boolean {
   }
 }
 
+function readDesktopPackageVersion(): string {
+  const candidates = [
+    path.resolve(__dirname, '..', '..', 'package.json'),
+    path.resolve(process.cwd(), 'apps', 'desktop', 'package.json'),
+  ];
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { version?: unknown };
+      const version = String(parsed?.version || '').trim();
+      if (version) {
+        return version;
+      }
+    } catch {
+      // ignore parse failure
+    }
+  }
+  return '';
+}
+
+function resolveAppRuntimeVersion(): string {
+  const fromApp = String(app.getVersion() || '').trim();
+  const desktopVersion = readDesktopPackageVersion();
+  const electronVersion = String(process.versions?.electron || '').trim();
+
+  if (!fromApp) {
+    return desktopVersion || 'unknown';
+  }
+
+  if (desktopVersion && fromApp === electronVersion) {
+    return desktopVersion;
+  }
+
+  if (!app.isPackaged && desktopVersion) {
+    return desktopVersion;
+  }
+
+  return fromApp;
+}
+
 function parseEnvText(text: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const rawLine of text.split(/\r?\n/)) {
@@ -462,6 +504,7 @@ class DesktopRuntime {
       dbPath: dbPath(),
       codexBin,
       fallbackModel: 'gpt-5.2-codex',
+      appVersion: resolveAppRuntimeVersion(),
       requestTimeoutMs: 60_000,
       turnTimeoutMs: 0,
       stuckTurnResetMs: 0,
